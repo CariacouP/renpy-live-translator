@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_SCRIPT="$SCRIPT_DIR/server/server.py"
 
 echo "=================================================="
-echo "  🎮 Démarrage du Ren'Py Live Translator Server"
+echo "  🎮 Starting Ren'Py Live Translator Server"
 echo "=================================================="
 
 # Ouvrir le navigateur après un court délai

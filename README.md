@@ -39,8 +39,9 @@
    ```
 
 2. **Start the server once:**
-   * **macOS / Linux:** `./start.sh`
+   * **macOS:** Double-click `start.command` (or run `./start.sh` in terminal)
    * **Windows:** Double-click `start.bat`
+   * **Linux:** `./start.sh`
    
    The web dashboard will automatically open in your browser at [http://127.0.0.1:5005](http://127.0.0.1:5005).
 
@@ -66,7 +67,7 @@ From now on, **you don't even need to open a terminal or start the server manual
 3. Dialogue is translated live as you play.
 4. When you quit the game, the background server is cleanly shut down automatically.
 
-*(Note: You can still start the server manually with `./start.sh` or `start.bat` anytime you want to access the live web dashboard).*
+*(Note: You can still start the server manually with `start.command` / `./start.sh` or `start.bat` anytime you want to access the live web dashboard).*
 
 The web dashboard is always accessible at [http://127.0.0.1:5005](http://127.0.0.1:5005).
 
