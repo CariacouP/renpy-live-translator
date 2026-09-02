@@ -1,0 +1,16 @@
+# ==============================================================================
+# Ren'Py Live Translator - Dependencies
+# ==============================================================================
+# Zero external pip packages required!
+# The entire backend server runs exclusively on Python's Standard Library:
+#   - sqlite3       (Local persistent translation caching)
+#   - http.server   (Lightweight HTTP & REST API server)
+#   - urllib.request(Google Translate & Ollama API communication)
+#   - configparser  (Configuration management in config.ini)
+#   - json          (JSON request and response serialization)
+#   - threading     (Multi-threaded server & async handling)
+#
+# System Requirements:
+#   - Python >= 3.8 (https://www.python.org/downloads/)
+#   - (Optional) Ollama (https://ollama.com) if using local AI models
+# ==============================================================================

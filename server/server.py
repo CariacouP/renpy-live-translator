@@ -1,7 +1,19 @@
-"""server.py - Serveur HTTP léger et API pour le traducteur Ren'Py à la volée."""
+"""server.py - Lightweight HTTP server & API for Ren'Py Live Translator."""
 
 import os
 import sys
+
+# Validate Python version immediately
+if sys.version_info < (3, 8):
+    print("=" * 60)
+    print("❌ ERROR: Python 3.8 or newer is required to run the server.")
+    print("   Current version: Python {}.{}.{}".format(
+        sys.version_info.major, sys.version_info.minor, sys.version_info.micro
+    ))
+    print("   Please install/update Python from https://www.python.org/downloads/")
+    print("=" * 60)
+    sys.exit(1)
+
 import json
 import time
 import threading
