@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Base de données et logs
+*.db
+*.sqlite3
+*.log
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Tests & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments & Packaging
+.env
+*.egg-info/
+dist/
+build/
+
