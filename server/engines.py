@@ -18,10 +18,24 @@ def protect_tags(text):
         tags.append(match.group(0))
         return f"__TAG{idx}__"
 
-    # Capture {tag}, {/tag}, {tag=val} et [variable]
-    pattern = r'(\{/?[\w#=.:]+(?:\s+[\w#=.:]+)*\}|\[[\w._]+\])'
+    # Capture toutes les balises Ren'Py {...} et interpolations [...]
+    # en évitant les séquences d'échappement {{ et [[
+    pattern = r'((?<!\{)\{(?!\{)[^{}]+\}(?!\})|(?<!\[)\[(?!\[)[^\[\]]+\](?!\]))'
     protected_text = re.sub(pattern, replacer, text)
     return protected_text, tags
+
+TAG_REPAIRS = [
+    (re.compile(r'\{taille(?=[=\s\}])', re.IGNORECASE), '{size'),
+    (re.compile(r'\{/taille\}', re.IGNORECASE), '{/size}'),
+    (re.compile(r'\{couleur(?=[=\s\}])', re.IGNORECASE), '{color'),
+    (re.compile(r'\{/couleur\}', re.IGNORECASE), '{/color}'),
+    (re.compile(r'\{police(?=[=\s\}])', re.IGNORECASE), '{font'),
+    (re.compile(r'\{/police\}', re.IGNORECASE), '{/font}'),
+    (re.compile(r'\{gras\}', re.IGNORECASE), '{b}'),
+    (re.compile(r'\{/gras\}', re.IGNORECASE), '{/b}'),
+    (re.compile(r'\{italique\}', re.IGNORECASE), '{i}'),
+    (re.compile(r'\{/italique\}', re.IGNORECASE), '{/i}'),
+]
 
 def restore_tags(text, tags):
     """Restaure les balises Ren'Py protégées."""
@@ -30,6 +44,9 @@ def restore_tags(text, tags):
         # Cherche le token exact ou avec des espaces introduits par un traducteur
         pattern = rf'__\s*TAG\s*{i}\s*__'
         restored = re.sub(pattern, lambda m: tag, restored, flags=re.IGNORECASE)
+    # Filet de sécurité : réparer d'éventuelles balises Ren'Py traduites par erreur
+    for pattern, replacement in TAG_REPAIRS:
+        restored = pattern.sub(replacement, restored)
     return restored
 
 class GoogleEngine:

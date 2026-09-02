@@ -71,6 +71,20 @@ class TestEngines(unittest.TestCase):
         restored = restore_tags(protected, tags)
         self.assertEqual(restored, text)
 
+    def test_tag_protection_relative_size_and_math(self):
+        text = "{size=+10}SMACK{/size} and {size=-5}whisper{/size} {alpha=*0.5}ghost{/alpha}"
+        protected, tags = protect_tags(text)
+        self.assertNotIn("{size=+10}", protected)
+        self.assertNotIn("{size=-5}", protected)
+        self.assertNotIn("{alpha=*0.5}", protected)
+        restored = restore_tags(protected, tags)
+        self.assertEqual(restored, text)
+
+    def test_tag_repair_safety_net(self):
+        corrupted = "Bonjour {taille=+10}CLAC{/taille} et {gras}Important{/gras}"
+        repaired = restore_tags(corrupted, [])
+        self.assertEqual(repaired, "Bonjour {size=+10}CLAC{/size} et {b}Important{/b}")
+
     @patch('urllib.request.urlopen')
     def test_google_engine_mock(self, mock_urlopen):
         mock_response = MagicMock()
