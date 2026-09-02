@@ -194,24 +194,77 @@ class TestServerHandler(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(data.get("status"), "shutting_down")
 
-    def test_plugin_local_tl_persistence(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Importer ou instancier la logique du plugin
-            # On simule LiveTranslator
-            tl_dir = os.path.join(temp_dir, "tl", "french")
-            os.makedirs(tl_dir)
-            file_path = os.path.join(tl_dir, "live_translations.rpy")
+    def test_record_server_location(self):
+        from server import record_server_location
+        with patch("builtins.open", unittest.mock.mock_open()) as mock_file:
+            record_server_location()
+            mock_file.assert_called_once()
 
-            # Écriture
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write('translate french strings:\n\n    old "Welcome"\n    new "Bienvenue"\n\n')
+    def test_plugin_server_discovery_and_lifecycle(self):
+        # Extract and compile the python code from 00_translator.rpy
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        
+        # Strip out the 'init -999 python:' and config hooks for testing
+        py_lines = []
+        for line in lines:
+            if line.strip().startswith("init ") or "config.say_menu_text_filter" in line or "_live_translator_instance = LiveTranslator()" in line:
+                continue
+            if line.startswith("    "):
+                py_lines.append(line[4:])
+            else:
+                py_lines.append(line)
+        
+        test_scope = {"config": type("MockConfig", (), {"gamedir": "/mock/game", "name": "TestGame"})()}
+        exec("".join(py_lines), test_scope)
+        
+        LiveTranslatorClass = test_scope["LiveTranslator"]
+        
+        # Test 1: Resolve server script with explicit SERVER_PATH
+        with patch.object(LiveTranslatorClass, '__init__', lambda self: None):
+            instance = LiveTranslatorClass()
+            instance.game_dir = "/mock/game"
+            instance.spawned_server = False
+            instance.server_process = None
+            instance.opener = MagicMock()
+            
+            # Explicit file
+            server_file = os.path.join(BASE_DIR, "server", "server.py")
+            test_scope["SERVER_PATH"] = server_file
+            self.assertEqual(instance._resolve_server_script(), server_file)
 
-            # Vérifier qu'on peut parser ce format
-            pattern = r'old\s+"(.*?(?<!\\))"\s*\n\s*new\s+"(.*?(?<!\\))"'
-            with open(file_path, "r", encoding="utf-8") as f:
-                matches = re.findall(pattern, f.read())
-            self.assertEqual(len(matches), 1)
-            self.assertEqual(matches[0], ("Welcome", "Bienvenue"))
+            # Test 2: If server is already running, spawned_server remains False
+            with patch.object(instance, '_is_server_running', return_value=True):
+                instance._ensure_server()
+                self.assertFalse(instance.spawned_server)
+
+            # Test 3: Cleanup does NOT shutdown server if spawned_server is False
+            with patch.object(instance.opener, 'open') as mock_open:
+                instance.spawned_server = False
+                instance._cleanup()
+                mock_open.assert_not_called()
+
+            # Test 4: Cleanup DOES shutdown server if spawned_server is True
+            with patch.object(instance.opener, 'open') as mock_open:
+                instance.spawned_server = True
+                instance._cleanup()
+                mock_open.assert_called_once()
+
+            # Test 5: _remember_server_path updates global SERVER_PATH and writes file
+            with tempfile.TemporaryDirectory() as temp_dir:
+                plugin_mock = os.path.join(temp_dir, "00_translator.rpy")
+                with open(plugin_mock, "w", encoding="utf-8") as f:
+                    f.write('SERVER_PATH = ""\nAUTO_START_MODE = "ask"\n')
+                
+                instance.game_dir = temp_dir
+                test_scope["SERVER_PATH"] = ""
+                instance._remember_server_path(server_file)
+                
+                self.assertEqual(test_scope["SERVER_PATH"], server_file)
+                with open(plugin_mock, "r", encoding="utf-8") as f:
+                    written = f.read()
+                self.assertIn(server_file, written)
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,7 @@ config.read(CONFIG_INI)
 
 DEFAULT_LANG = config.get("Translation", "TARGET_LANG", fallback=config.get("Translation", "LANG_CODE", fallback="fr"))
 DEFAULT_MODEL = config.get("AI", "MODEL", fallback="qwen3:latest")
+DEFAULT_ENGINE = config.get("Translation", "ENGINE", fallback="google")
 DEFAULT_PORT = config.getint("Server", "PORT", fallback=5005)
 
 LANG_NAMES = {
@@ -39,13 +40,13 @@ LANG_NAMES = {
     "zh": "chinese"
 }
 
-# État global du serveur
+# Global server state
 class ServerState:
     def __init__(self):
         self.storage = TranslationStorage()
         self.google_engine = GoogleEngine()
         self.ollama_engine = OllamaEngine(model=DEFAULT_MODEL)
-        self.engine_name = "google" # "google" ou "ollama"
+        self.engine_name = DEFAULT_ENGINE  # "google" or "ollama"
         self.target_lang = DEFAULT_LANG
         self.model_name = DEFAULT_MODEL
 
@@ -100,13 +101,14 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(content)
             else:
-                self.send_error(404, "Dashboard introuvable")
+                self.send_error(404, "Dashboard not found")
             return
 
         elif path == "/api/status":
             models = get_ollama_models()
             self._send_json({
                 "status": "online",
+                "server_path": os.path.abspath(__file__),
                 "engine": state.engine_name,
                 "target_lang": state.target_lang,
                 "model": state.model_name,
@@ -147,7 +149,7 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
             self.wfile.write(content_bytes)
             return
 
-        self.send_error(404, "Endpoint non trouvé")
+        self.send_error(404, "Endpoint not found")
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -204,6 +206,21 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
                 state.target_lang = data["target_lang"]
             if "model" in data:
                 state.model_name = data["model"]
+
+            # Persist changes to config.ini
+            try:
+                if not config.has_section("Translation"):
+                    config.add_section("Translation")
+                if not config.has_section("AI"):
+                    config.add_section("AI")
+                config.set("Translation", "TARGET_LANG", state.target_lang)
+                config.set("Translation", "ENGINE", state.engine_name)
+                config.set("AI", "MODEL", state.model_name)
+                with open(CONFIG_INI, "w", encoding="utf-8") as f:
+                    config.write(f)
+            except Exception:
+                pass
+
             self._send_json({"status": "updated", "config": {
                 "engine": state.engine_name,
                 "target_lang": state.target_lang,
@@ -212,7 +229,7 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
             return
 
         elif path == "/api/shutdown":
-            self._send_json({"status": "shutting_down", "message": "Serveur arrêté avec succès."})
+            self._send_json({"status": "shutting_down", "message": "Server stopped successfully."})
             def _delayed_shutdown(srv):
                 time.sleep(0.2)
                 if srv and hasattr(srv, 'shutdown'):
@@ -220,25 +237,35 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
             threading.Thread(target=_delayed_shutdown, args=(getattr(self, 'server', None),), daemon=True).start()
             return
 
-        self.send_error(404, "Endpoint non trouvé")
+        self.send_error(404, "Endpoint not found")
 
     def log_message(self, format, *args):
         return
 
+def record_server_location():
+    """Saves the absolute path of server.py to ~/.renpy_translator_path for automatic plugin discovery."""
+    try:
+        path_file = os.path.expanduser("~/.renpy_translator_path")
+        with open(path_file, "w", encoding="utf-8") as f:
+            f.write(os.path.abspath(__file__))
+    except Exception:
+        pass
+
 def run_server(port=5005):
+    record_server_location()
     server_address = ("127.0.0.1", port)
     httpd = ThreadingHTTPServer(server_address, LiveTranslatorHandler)
     print(f"==================================================")
-    print(f"  🎮 Ren'Py Live Translator Server actif sur :")
+    print(f"  🎮 Ren'Py Live Translator Server active on:")
     print(f"  👉 http://127.0.0.1:{port}")
     print(f"==================================================")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\nArrêt demandé par l'utilisateur (Ctrl+C).")
+        print("\nShutdown requested (Ctrl+C).")
     finally:
         httpd.server_close()
-        print("Serveur arrêté proprement.")
+        print("Server stopped cleanly.")
 
 if __name__ == "__main__":
     port = DEFAULT_PORT

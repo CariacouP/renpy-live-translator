@@ -27,38 +27,48 @@
 
 ## 🚀 Quick Start
 
-### 1. Launch the Local Server
-* **On macOS / Linux:**
-  ```bash
-  ./start.sh
-  ```
-* **On Windows:**
-  Double-click `start.bat` (or run `python server\server.py`).
+### 1. First-Time Setup (One-Time Only)
 
-The dashboard will automatically open in your default browser at [http://127.0.0.1:5005](http://127.0.0.1:5005).
+1. **Install the plugin:**  
+   Copy 📁 `plugin/00_translator.rpy` into your game's `game/` folder:
+   ```
+   Your_Renpy_Game/
+   └── game/
+       ├── 00_translator.rpy   <-- Paste here
+       └── ...
+   ```
+
+2. **Start the server once:**
+   * **macOS / Linux:** `./start.sh`
+   * **Windows:** Double-click `start.bat`
+   
+   The web dashboard will automatically open in your browser at [http://127.0.0.1:5005](http://127.0.0.1:5005).
+
+3. **Choose your settings in the Web Dashboard:**
+   * **Target Language:** Select your desired language (French, Spanish, German, Japanese, etc.).
+   * **Translation Engine:** Choose **Google Translate** (instant) or **Local AI (Ollama)**.
+   * *All settings changed in the dashboard are permanently saved into `config.ini`!*
+
+4. **Launch your game once:**
+   * The plugin connects to the server and **automatically registers its path** into `game/00_translator.rpy` and system cache (`~/.renpy_translator_path`).
+   * No manual path editing required!
 
 ---
 
-### 2. Install the Plugin in Your Game
-Simply copy the file:  
-📁 `plugin/00_translator.rpy`
+### 2. Subsequent Plays: 100% Automatic!
 
-And paste it into the `game/` folder of your Ren'Py game:
-```
-Your_Renpy_Game/
-└── game/
-    ├── 00_translator.rpy   <-- Paste the file here
-    ├── script.rpy (or .rpyc / .rpa archives)
-    └── ...
-```
+From now on, **you don't even need to open a terminal or start the server manually**:
 
----
+1. **Just open your Ren'Py game!**
+2. If the server is offline:
+   * A dialog will ask if you want to start it in the background (`AUTO_START_MODE = "ask"`).
+   * Or set `AUTO_START_MODE = "always"` in `00_translator.rpy` to start it instantly without any prompt.
+3. Dialogue is translated live as you play.
+4. When you quit the game, the background server is cleanly shut down automatically.
 
-### 3. Play!
-Launch your game normally:
-* As you advance through dialogue, lines appear translated on screen.
-* The web dashboard displays the active dialogue stream and cache status in real time.
-* `game/tl/<language>/live_translations.rpy` is continuously populated as you discover new lines.
+*(Note: You can still start the server manually with `./start.sh` or `start.bat` anytime you want to access the live web dashboard).*
+
+The web dashboard is always accessible at [http://127.0.0.1:5005](http://127.0.0.1:5005).
 
 ---
 
