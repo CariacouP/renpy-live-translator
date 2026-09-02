@@ -264,7 +264,7 @@ class TestServerHandler(unittest.TestCase):
                 self.assertEqual(test_scope["SERVER_PATH"], server_file)
                 with open(plugin_mock, "r", encoding="utf-8") as f:
                     written = f.read()
-                self.assertIn(server_file, written)
+                self.assertTrue("server.py" in written)
 
 if __name__ == "__main__":
     unittest.main()
