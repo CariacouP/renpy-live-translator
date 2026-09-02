@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ren'Py Live Translator - Tableau de Bord</title>
+  <title>Ren'Py Live Translator - Dashboard</title>
   <style>
     :root {
       --bg: #0f111a;
@@ -52,7 +52,7 @@
     }
     .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
 
-    /* Grille supérieure : Stats & Contrôles */
+    /* Top Grid: Stats & Controls */
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
     @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
 
@@ -80,7 +80,7 @@
     .stat-val { font-size: 1.8rem; font-weight: 700; color: #fff; }
     .stat-lbl { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; }
 
-    /* Formulaire */
+    /* Form */
     .form-group { margin-bottom: 14px; }
     .form-group label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 6px; }
     select, input {
@@ -136,7 +136,7 @@
       color: #c4b5fd;
     }
 
-    /* Flux de dialogue en direct */
+    /* Live Feed */
     .feed-header {
       display: flex;
       justify-content: space-between;
@@ -178,104 +178,107 @@
   <header>
     <div class="logo-group">
       <h1>🎮 Ren'Py Live Translator</h1>
-      <p>Traduction en temps réel à la volée pour Visual Novels</p>
+      <p data-i18n="subtitle">Real-time on-the-fly translation for Visual Novels</p>
     </div>
     <div style="display: flex; align-items: center; gap: 12px;">
       <div class="status-pill" id="status-pill">
         <div class="status-dot" id="status-dot"></div>
-        <span id="server-status">Serveur en ligne</span>
+        <span id="server-status" data-i18n="status_online">Server Online</span>
       </div>
-      <button class="btn btn-danger" id="shutdown-btn" onclick="shutdownServer()" title="Arrêter le serveur local">
-        🛑 Éteindre
+      <button class="btn btn-danger" id="shutdown-btn" onclick="shutdownServer()" data-i18n="btn_shutdown" title="Stop the local server">
+        🛑 Shut Down
       </button>
     </div>
   </header>
 
   <div id="shutdown-banner" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; padding: 16px 20px; border-radius: 12px; margin-bottom: 24px; text-align: center;">
-    <strong style="font-size: 1.05rem;">🛑 Le serveur a été éteint avec succès.</strong>
-    <p style="margin-top: 6px; font-size: 0.9rem; color: #cbd5e1;">Vous pouvez maintenant fermer cet onglet en toute tranquillité.</p>
+    <strong style="font-size: 1.05rem;" data-i18n="shutdown_title">🛑 Server stopped successfully.</strong>
+    <p style="margin-top: 6px; font-size: 0.9rem; color: #cbd5e1;" data-i18n="shutdown_sub">You can now safely close this tab.</p>
   </div>
 
   <div class="instructions">
     <div>
-      <strong>Mode d'emploi express :</strong>
-      <p>Glissez simplement le fichier <code>plugin/00_translator.rpy</code> dans le sous-dossier <code>game/</code> de votre jeu Ren'Py, puis jouez !</p>
+      <strong data-i18n="guide_title">Quick Start Guide:</strong>
+      <p data-i18n="guide_text">Drop the file <code>plugin/00_translator.rpy</code> into the <code>game/</code> folder of your Ren'Py game, then play!</p>
     </div>
-    <button class="btn btn-secondary" onclick="exportTranslations()">💾 Exporter le cache (.rpy / .json)</button>
+    <button class="btn btn-secondary" onclick="exportTranslations()" data-i18n="btn_export">💾 Export cache (.rpy / .json)</button>
   </div>
 
   <div class="grid">
-    <!-- Paramètres -->
+    <!-- Settings -->
     <div class="card">
-      <h2>⚙️ Configuration Active</h2>
+      <h2 data-i18n="card_settings">⚙️ Active Settings</h2>
       <div class="form-group">
-        <label>Moteur de traduction :</label>
+        <label data-i18n="lbl_engine">Translation Engine:</label>
         <select id="engine-select" onchange="updateSettings()">
-          <option value="google">Google Translate (Ultra-rapide ~150ms)</option>
-          <option value="ollama">IA Locale Ollama (Contextuel ~1s)</option>
+          <option value="google" id="opt-google">Google Translate (Lightning-fast ~150ms)</option>
+          <option value="ollama" id="opt-ollama">Local AI Ollama (Contextual ~1s)</option>
         </select>
       </div>
 
       <div class="form-group" id="ollama-group" style="display: none;">
-        <label>Modèle Ollama :</label>
+        <label data-i18n="lbl_model">Ollama Model:</label>
         <select id="model-select" onchange="updateSettings()">
           <option value="qwen3:latest">qwen3:latest</option>
         </select>
       </div>
 
       <div class="form-group">
-        <label>Langue cible :</label>
+        <label data-i18n="lbl_target_lang">Target Language:</label>
         <select id="lang-select" onchange="updateSettings()">
+          <option value="en">English (en)</option>
           <option value="fr">Français (fr)</option>
-          <option value="es">Espagnol (es)</option>
-          <option value="de">Allemand (de)</option>
-          <option value="it">Italien (it)</option>
-          <option value="en">Anglais (en)</option>
-          <option value="ja">Japonais (ja)</option>
+          <option value="es">Español (es)</option>
+          <option value="de">Deutsch (de)</option>
+          <option value="it">Italiano (it)</option>
+          <option value="pt">Português (pt)</option>
+          <option value="ru">Русский (ru)</option>
+          <option value="ja">日本語 (ja)</option>
+          <option value="zh">中文 (zh)</option>
         </select>
       </div>
 
       <div style="margin-top: 18px; display: flex; gap: 8px;">
-        <input type="text" id="test-input" placeholder="Tester une phrase en anglais..." />
-        <button class="btn" onclick="testTranslate()">Tester</button>
+        <input type="text" id="test-input" data-i18n-placeholder="placeholder_test" placeholder="Test a sentence in English..." />
+        <button class="btn" onclick="testTranslate()" data-i18n="btn_test">Test</button>
       </div>
       <div id="test-result" style="margin-top: 10px; font-size: 0.9rem; color: #a78bfa;"></div>
     </div>
 
-    <!-- Statistiques -->
+    <!-- Statistics -->
     <div class="card">
-      <h2>📊 Statistiques du Cache</h2>
+      <h2 data-i18n="card_stats">📊 Cache Statistics</h2>
       <div class="stats-row">
         <div class="stat-box">
           <div class="stat-val" id="stat-total">0</div>
-          <div class="stat-lbl">Phrases en cache</div>
+          <div class="stat-lbl" data-i18n="stat_cached">Cached Lines</div>
         </div>
         <div class="stat-box">
           <div class="stat-val" id="stat-games">0</div>
-          <div class="stat-lbl">Jeux joués</div>
+          <div class="stat-lbl" data-i18n="stat_games">Games Played</div>
         </div>
         <div class="stat-box">
           <div class="stat-val" id="stat-engine">Google</div>
-          <div class="stat-lbl">Moteur Actif</div>
+          <div class="stat-lbl" data-i18n="stat_active_engine">Active Engine</div>
         </div>
       </div>
 
       <div style="margin-top: 24px;">
-        <h3 style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);">Jeux détectés :</h3>
-        <div id="games-list" style="font-size: 0.85rem; color: #cbd5e1;">Aucun jeu détecté pour l'instant.</div>
+        <h3 style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);" data-i18n="lbl_detected_games">Detected Games:</h3>
+        <div id="games-list" style="font-size: 0.85rem; color: #cbd5e1;" data-i18n="no_games">No games detected yet.</div>
       </div>
     </div>
   </div>
 
-  <!-- Flux en direct -->
+  <!-- Live Feed -->
   <div class="card">
     <div class="feed-header">
-      <h2>💬 Flux de Traduction en Direct</h2>
-      <span style="font-size: 0.8rem; color: var(--text-muted);">Mise à jour automatique</span>
+      <h2 data-i18n="card_feed">💬 Live Translation Stream</h2>
+      <span style="font-size: 0.8rem; color: var(--text-muted);" data-i18n="lbl_auto_updating">Auto-updating</span>
     </div>
     <div class="feed-list" id="feed-list">
-      <div style="text-align: center; color: var(--text-muted); padding: 40px;">
-        En attente de répliques... Lancez votre jeu Ren'Py avec le plugin pour voir les dialogues apparaître ici en direct.
+      <div id="feed-empty-msg" style="text-align: center; color: var(--text-muted); padding: 40px;" data-i18n="feed_waiting">
+        Waiting for dialogue... Launch your Ren'Py game with the plugin to see dialogues appear live here.
       </div>
     </div>
   </div>
@@ -286,6 +289,340 @@
   let isShuttingDown = false;
   let refreshTimer = null;
 
+  // Multi-language translation dictionaries
+  const I18N = {
+    en: {
+      page_title: "Ren'Py Live Translator - Dashboard",
+      subtitle: "Real-time on-the-fly translation for Visual Novels",
+      status_online: "Server Online",
+      status_stopped: "Server Stopped",
+      btn_shutdown: "🛑 Shut Down",
+      btn_shutting_down: "Stopping...",
+      shutdown_title: "🛑 Server stopped successfully.",
+      shutdown_sub: "You can now safely close this tab.",
+      guide_title: "Quick Start Guide:",
+      guide_text: "Drop the file <code>plugin/00_translator.rpy</code> into the <code>game/</code> folder of your Ren'Py game, then play!",
+      btn_export: "💾 Export cache (.rpy / .json)",
+      card_settings: "⚙️ Active Settings",
+      lbl_engine: "Translation Engine:",
+      opt_google: "Google Translate (Lightning-fast ~150ms)",
+      opt_ollama: "Local AI Ollama (Contextual ~1s)",
+      lbl_model: "Ollama Model:",
+      lbl_target_lang: "Target Language:",
+      placeholder_test: "Test a sentence in English...",
+      btn_test: "Test",
+      test_in_progress: "Translating...",
+      test_result_prefix: "Result: ",
+      card_stats: "📊 Cache Statistics",
+      stat_cached: "Cached Lines",
+      stat_games: "Games Played",
+      stat_active_engine: "Active Engine",
+      lbl_detected_games: "Detected Games:",
+      no_games: "No games detected yet.",
+      card_feed: "💬 Live Translation Stream",
+      lbl_auto_updating: "Auto-updating",
+      feed_waiting: "Waiting for dialogue... Launch your Ren'Py game with the plugin to see dialogues appear live here.",
+      confirm_shutdown: "Are you sure you want to shut down the translation server?"
+    },
+    fr: {
+      page_title: "Ren'Py Live Translator - Tableau de Bord",
+      subtitle: "Traduction en temps réel à la volée pour Visual Novels",
+      status_online: "Serveur en ligne",
+      status_stopped: "Serveur éteint",
+      btn_shutdown: "🛑 Éteindre",
+      btn_shutting_down: "Arrêt en cours...",
+      shutdown_title: "🛑 Le serveur a été éteint avec succès.",
+      shutdown_sub: "Vous pouvez maintenant fermer cet onglet en toute tranquillité.",
+      guide_title: "Mode d'emploi express :",
+      guide_text: "Glissez simplement le fichier <code>plugin/00_translator.rpy</code> dans le sous-dossier <code>game/</code> de votre jeu Ren'Py, puis jouez !",
+      btn_export: "💾 Exporter le cache (.rpy / .json)",
+      card_settings: "⚙️ Configuration Active",
+      lbl_engine: "Moteur de traduction :",
+      opt_google: "Google Translate (Ultra-rapide ~150ms)",
+      opt_ollama: "IA Locale Ollama (Contextuel ~1s)",
+      lbl_model: "Modèle Ollama :",
+      lbl_target_lang: "Langue cible :",
+      placeholder_test: "Tester une phrase en anglais...",
+      btn_test: "Tester",
+      test_in_progress: "Traduction en cours...",
+      test_result_prefix: "Résultat : ",
+      card_stats: "📊 Statistiques du Cache",
+      stat_cached: "Phrases en cache",
+      stat_games: "Jeux joués",
+      stat_active_engine: "Moteur Actif",
+      lbl_detected_games: "Jeux détectés :",
+      no_games: "Aucun jeu détecté pour l'instant.",
+      card_feed: "💬 Flux de Traduction en Direct",
+      lbl_auto_updating: "Mise à jour automatique",
+      feed_waiting: "En attente de répliques... Lancez votre jeu Ren'Py avec le plugin pour voir les dialogues apparaître ici en direct.",
+      confirm_shutdown: "Voulez-vous vraiment éteindre le serveur de traduction ?"
+    },
+    es: {
+      page_title: "Ren'Py Live Translator - Panel de Control",
+      subtitle: "Traducción en tiempo real sobre la marcha para Visual Novels",
+      status_online: "Servidor en línea",
+      status_stopped: "Servidor detenido",
+      btn_shutdown: "🛑 Apagar",
+      btn_shutting_down: "Apagando...",
+      shutdown_title: "🛑 El servidor se ha apagado con éxito.",
+      shutdown_sub: "Ahora puede cerrar esta pestaña con seguridad.",
+      guide_title: "Guía rápida:",
+      guide_text: "¡Coloque el archivo <code>plugin/00_translator.rpy</code> en la carpeta <code>game/</code> de su juego Ren'Py y juegue!",
+      btn_export: "💾 Exportar caché (.rpy / .json)",
+      card_settings: "⚙️ Configuración Activa",
+      lbl_engine: "Motor de traducción:",
+      opt_google: "Google Translate (Ultrarrápido ~150ms)",
+      opt_ollama: "IA Local Ollama (Contextual ~1s)",
+      lbl_model: "Modelo Ollama:",
+      lbl_target_lang: "Idioma de destino:",
+      placeholder_test: "Probar una frase en inglés...",
+      btn_test: "Probar",
+      test_in_progress: "Traduciendo...",
+      test_result_prefix: "Resultado: ",
+      card_stats: "📊 Estadísticas del Caché",
+      stat_cached: "Frases en caché",
+      stat_games: "Juegos jugados",
+      stat_active_engine: "Motor Activo",
+      lbl_detected_games: "Juegos detectados:",
+      no_games: "Ningún juego detectado todavía.",
+      card_feed: "💬 Flujo de Traducción en Vivo",
+      lbl_auto_updating: "Actualización automática",
+      feed_waiting: "Esperando diálogos... Inicia tu juego Ren'Py con el plugin para ver diálogos aquí.",
+      confirm_shutdown: "¿Está seguro de que desea apagar el servidor de traducción?"
+    },
+    de: {
+      page_title: "Ren'Py Live Translator - Dashboard",
+      subtitle: "Echtzeit-Übersetzung für Visual Novels",
+      status_online: "Server Online",
+      status_stopped: "Server Gestoppt",
+      btn_shutdown: "🛑 Beenden",
+      btn_shutting_down: "Wird beendet...",
+      shutdown_title: "🛑 Der Server wurde erfolgreich beendet.",
+      shutdown_sub: "Sie können diesen Tab jetzt schließen.",
+      guide_title: "Schnellstart-Anleitung:",
+      guide_text: "Kopieren Sie <code>plugin/00_translator.rpy</code> in den <code>game/</code>-Ordner Ihres Spiels und spielen Sie!",
+      btn_export: "💾 Cache exportieren (.rpy / .json)",
+      card_settings: "⚙️ Aktive Einstellungen",
+      lbl_engine: "Übersetzungs-Engine:",
+      opt_google: "Google Translate (Blitzschnell ~150ms)",
+      opt_ollama: "Lokale KI Ollama (Kontextuell ~1s)",
+      lbl_model: "Ollama-Modell:",
+      lbl_target_lang: "Zielsprache:",
+      placeholder_test: "Einen englischen Satz testen...",
+      btn_test: "Prüfen",
+      test_in_progress: "Wird übersetzt...",
+      test_result_prefix: "Ergebnis: ",
+      card_stats: "📊 Cache-Statistiken",
+      stat_cached: "Gespeicherte Zeilen",
+      stat_games: "Gespielte Spiele",
+      stat_active_engine: "Aktive Engine",
+      lbl_detected_games: "Erkannte Spiele:",
+      no_games: "Noch keine Spiele erkannt.",
+      card_feed: "💬 Live-Übersetzungs-Stream",
+      lbl_auto_updating: "Automatische Aktualisierung",
+      feed_waiting: "Warte auf Dialoge... Starte dein Ren'Py-Spiel mit dem Plugin.",
+      confirm_shutdown: "Möchten Sie den Übersetzungsserver wirklich beenden?"
+    },
+    it: {
+      page_title: "Ren'Py Live Translator - Pannello di Controllo",
+      subtitle: "Traduzione in tempo reale per Visual Novel",
+      status_online: "Server Online",
+      status_stopped: "Server Arrestato",
+      btn_shutdown: "🛑 Arresta",
+      btn_shutting_down: "Arresto in corso...",
+      shutdown_title: "🛑 Il server è stato arrestato con successo.",
+      shutdown_sub: "Ora puoi chiudere questa scheda in sicurezza.",
+      guide_title: "Guida rapida:",
+      guide_text: "Trascina il file <code>plugin/00_translator.rpy</code> nella cartella <code>game/</code> del tuo gioco Ren'Py, poi gioca!",
+      btn_export: "💾 Esporta cache (.rpy / .json)",
+      card_settings: "⚙️ Configurazione Attiva",
+      lbl_engine: "Motore di traduzione:",
+      opt_google: "Google Translate (Ultrarapido ~150ms)",
+      opt_ollama: "IA Locale Ollama (Contestuale ~1s)",
+      lbl_model: "Modello Ollama:",
+      lbl_target_lang: "Lingua di destinazione:",
+      placeholder_test: "Prova una frase in inglese...",
+      btn_test: "Prova",
+      test_in_progress: "Traduzione in corso...",
+      test_result_prefix: "Risultato: ",
+      card_stats: "📊 Statistiche della Cache",
+      stat_cached: "Linee in cache",
+      stat_games: "Giochi avviati",
+      stat_active_engine: "Motore Attivo",
+      lbl_detected_games: "Giochi rilevati:",
+      no_games: "Nessun gioco rilevato al momento.",
+      card_feed: "💬 Flusso di Traduzione in Diretta",
+      lbl_auto_updating: "Aggiornamento automatico",
+      feed_waiting: "In attesa di dialoghi... Avvia il gioco Ren'Py con il plugin.",
+      confirm_shutdown: "Sei sicuro di voler arrestare il server di traduzione?"
+    },
+    pt: {
+      page_title: "Ren'Py Live Translator - Painel de Controle",
+      subtitle: "Tradução em tempo real para Visual Novels",
+      status_online: "Servidor Online",
+      status_stopped: "Servidor Desligado",
+      btn_shutdown: "🛑 Desligar",
+      btn_shutting_down: "Desligando...",
+      shutdown_title: "🛑 O servidor foi desligado com sucesso.",
+      shutdown_sub: "Agora você pode fechar esta aba com segurança.",
+      guide_title: "Guia Rápido:",
+      guide_text: "Basta colocar o arquivo <code>plugin/00_translator.rpy</code> na pasta <code>game/</code> do seu jogo Ren'Py e jogar!",
+      btn_export: "💾 Exportar cache (.rpy / .json)",
+      card_settings: "⚙️ Configurações Ativas",
+      lbl_engine: "Motor de tradução:",
+      opt_google: "Google Translate (Ultrarrápido ~150ms)",
+      opt_ollama: "IA Local Ollama (Contextual ~1s)",
+      lbl_model: "Modelo Ollama:",
+      lbl_target_lang: "Idioma de destino:",
+      placeholder_test: "Testar uma frase em inglês...",
+      btn_test: "Testar",
+      test_in_progress: "Traduzindo...",
+      test_result_prefix: "Resultado: ",
+      card_stats: "📊 Estatísticas do Cache",
+      stat_cached: "Frases no cache",
+      stat_games: "Jogos jogados",
+      stat_active_engine: "Motor Ativo",
+      lbl_detected_games: "Jogos detectados:",
+      no_games: "Nenhum jogo detectado ainda.",
+      card_feed: "💬 Fluxo de Tradução ao Vivo",
+      lbl_auto_updating: "Atualização automática",
+      feed_waiting: "Aguardando diálogos... Inicie seu jogo Ren'Py com o plugin.",
+      confirm_shutdown: "Tem certeza de que deseja desligar o servidor de tradução?"
+    },
+    ru: {
+      page_title: "Ren'Py Live Translator - Панель управления",
+      subtitle: "Перевод визуальных новелл в реальном времени",
+      status_online: "Сервер онлайн",
+      status_stopped: "Сервер остановлен",
+      btn_shutdown: "🛑 Выключить",
+      btn_shutting_down: "Остановка...",
+      shutdown_title: "🛑 Сервер успешно остановлен.",
+      shutdown_sub: "Теперь вы можете безопасно закрыть эту вкладку.",
+      guide_title: "Быстрый старт:",
+      guide_text: "Просто поместите <code>plugin/00_translator.rpy</code> в папку <code>game/</code> вашей игры Ren'Py и играйте!",
+      btn_export: "💾 Экспорт кэша (.rpy / .json)",
+      card_settings: "⚙️ Активные настройки",
+      lbl_engine: "Движок перевода:",
+      opt_google: "Google Translate (Сверхбыстрый ~150мс)",
+      opt_ollama: "Локальный ИИ Ollama (Контекстный ~1с)",
+      lbl_model: "Модель Ollama:",
+      lbl_target_lang: "Язык перевода:",
+      placeholder_test: "Проверить фразу на английском...",
+      btn_test: "Проверить",
+      test_in_progress: "Перевод...",
+      test_result_prefix: "Результат: ",
+      card_stats: "📊 Статистика кэша",
+      stat_cached: "Строк в кэше",
+      stat_games: "Сыграно игр",
+      stat_active_engine: "Активный движок",
+      lbl_detected_games: "Обнаруженные игры:",
+      no_games: "Игры пока не обнаружены.",
+      card_feed: "💬 Поток перевода в реальном времени",
+      lbl_auto_updating: "Автообновление",
+      feed_waiting: "Ожидание диалогов... Запустите игру Ren'Py с плагином.",
+      confirm_shutdown: "Вы уверены, что хотите выключить сервер переводов?"
+    },
+    ja: {
+      page_title: "Ren'Py Live Translator - ダッシュボード",
+      subtitle: "ビジュアルノベル向けリアルタイム即時翻訳",
+      status_online: "サーバー オンライン",
+      status_stopped: "サーバー 停止中",
+      btn_shutdown: "🛑 停止する",
+      btn_shutting_down: "停止中...",
+      shutdown_title: "🛑 サーバーが正常に停止しました。",
+      shutdown_sub: "このタブを安全に閉じることができます。",
+      guide_title: "クイックスタート:",
+      guide_text: "<code>plugin/00_translator.rpy</code> をRen'Pyゲームの <code>game/</code> フォルダに入れてゲームを起動するだけ！",
+      btn_export: "💾 キャッシュを出力 (.rpy / .json)",
+      card_settings: "⚙️ 現在の設定",
+      lbl_engine: "翻訳エンジン:",
+      opt_google: "Google Translate (超高速 ~150ms)",
+      opt_ollama: "ローカルAI Ollama (文脈考慮 ~1s)",
+      lbl_model: "Ollama モデル:",
+      lbl_target_lang: "翻訳先言語:",
+      placeholder_test: "英語の文章をテスト入力...",
+      btn_test: "テスト",
+      test_in_progress: "翻訳中...",
+      test_result_prefix: "翻訳結果: ",
+      card_stats: "📊 キャッシュ統計",
+      stat_cached: "キャッシュ行数",
+      stat_games: "プレイしたゲーム数",
+      stat_active_engine: "使用中エンジン",
+      lbl_detected_games: "検出されたゲーム:",
+      no_games: "まだ検出されたゲームはありません。",
+      card_feed: "💬 リアルタイム翻訳ストリーム",
+      lbl_auto_updating: "自動更新中",
+      feed_waiting: "セリフ待機中... プラグインを入れてRen'Pyゲームを起動するとここに表示されます。",
+      confirm_shutdown: "本当に翻訳サーバーを停止しますか？"
+    },
+    zh: {
+      page_title: "Ren'Py Live Translator - 控制面板",
+      subtitle: "视觉小说实时即时翻译",
+      status_online: "服务器 在线",
+      status_stopped: "服务器 已停止",
+      btn_shutdown: "🛑 关闭服务器",
+      btn_shutting_down: "正在关闭...",
+      shutdown_title: "🛑 服务器已成功关闭。",
+      shutdown_sub: "您现在可以安全地关闭此标签页。",
+      guide_title: "快速指南：",
+      guide_text: "只需将 <code>plugin/00_translator.rpy</code> 复制到 Ren'Py 游戏的 <code>game/</code> 文件夹中即可！",
+      btn_export: "💾 导出翻译缓存 (.rpy / .json)",
+      card_settings: "⚙️ 当前配置",
+      lbl_engine: "翻译引擎：",
+      opt_google: "Google Translate (超高速 ~150ms)",
+      opt_ollama: "本地 AI Ollama (更具语境 ~1s)",
+      lbl_model: "Ollama 模型：",
+      lbl_target_lang: "目标语言：",
+      placeholder_test: "输入一句英文进行测试...",
+      btn_test: "测试",
+      test_in_progress: "正在翻译...",
+      test_result_prefix: "结果：",
+      card_stats: "📊 缓存统计",
+      stat_cached: "已缓存文本行数",
+      stat_games: "已检测游戏数",
+      stat_active_engine: "当前引擎",
+      lbl_detected_games: "已检测到的游戏：",
+      no_games: "暂未检测到游戏。",
+      card_feed: "💬 实时翻译流",
+      lbl_auto_updating: "自动更新",
+      feed_waiting: "等待对话中... 启动带有插件的 Ren'Py 游戏即可实时查看对话。",
+      confirm_shutdown: "您确定要关闭翻译服务器吗？"
+    }
+  };
+
+  let activeLang = 'en';
+
+  function applyLanguage(lang) {
+    activeLang = I18N[lang] ? lang : 'en';
+    const dict = I18N[activeLang];
+
+    document.documentElement.lang = activeLang;
+    document.title = dict.page_title;
+
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.getAttribute('data-i18n');
+      if (dict[key] !== undefined) {
+        el.innerHTML = dict[key];
+      }
+    });
+
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+      const key = el.getAttribute('data-i18n-placeholder');
+      if (dict[key] !== undefined) {
+        el.placeholder = dict[key];
+      }
+    });
+
+    const optGoogle = document.getElementById('opt-google');
+    if (optGoogle && dict.opt_google) optGoogle.innerText = dict.opt_google;
+    const optOllama = document.getElementById('opt-ollama');
+    if (optOllama && dict.opt_ollama) optOllama.innerText = dict.opt_ollama;
+
+    if (!isShuttingDown) {
+      document.getElementById('server-status').innerText = dict.status_online;
+    }
+  }
+
   async function loadStatus() {
     if (isShuttingDown) return;
     try {
@@ -293,9 +630,28 @@
       const data = await res.json();
       currentConfig = data;
 
+      // First-time auto-detection: if the user hasn't explicitly configured a language yet
+      const isConfigured = localStorage.getItem('translator_lang_configured');
+      if (!isConfigured && data.target_lang === 'en') {
+        const sysLang = (navigator.language || navigator.userLanguage || 'en').slice(0, 2).toLowerCase();
+        if (I18N[sysLang] && sysLang !== 'en') {
+          data.target_lang = sysLang;
+          localStorage.setItem('translator_lang_configured', 'true');
+          // Persist immediately to server config.ini
+          fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ engine: data.engine, target_lang: sysLang, model: data.model })
+          });
+        }
+      }
+
       document.getElementById('engine-select').value = data.engine;
       document.getElementById('lang-select').value = data.target_lang;
       document.getElementById('stat-engine').innerText = data.engine === 'google' ? 'Google' : 'Ollama';
+
+      // Automatically translate UI according to target_lang
+      applyLanguage(data.target_lang);
 
       const ollamaGroup = document.getElementById('ollama-group');
       if (data.engine === 'ollama') {
@@ -329,7 +685,8 @@
       if (data.games && data.games.length > 0) {
         gamesList.innerHTML = data.games.map(g => `<span class="game-badge" style="margin-right: 8px;">${g.game_id} (${g.count})</span>`).join('');
       } else {
-        gamesList.innerText = "Aucun jeu détecté pour l'instant.";
+        const dict = I18N[activeLang] || I18N['en'];
+        gamesList.innerText = dict.no_games;
       }
     } catch (e) {
       if (!isShuttingDown) console.error(e);
@@ -365,6 +722,11 @@
     const target_lang = document.getElementById('lang-select').value;
     const model = document.getElementById('model-select').value;
 
+    localStorage.setItem('translator_lang_configured', 'true');
+
+    // Immediately update UI language to match selected target language
+    applyLanguage(target_lang);
+
     await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -375,10 +737,11 @@
 
   async function testTranslate() {
     if (isShuttingDown) return;
+    const dict = I18N[activeLang] || I18N['en'];
     const text = document.getElementById('test-input').value;
     if (!text) return;
     const resBox = document.getElementById('test-result');
-    resBox.innerText = "Traduction en cours...";
+    resBox.innerText = dict.test_in_progress;
 
     const res = await fetch('/api/translate', {
       method: 'POST',
@@ -386,7 +749,7 @@
       body: JSON.stringify({ text, game_id: 'TestWeb' })
     });
     const data = await res.json();
-    resBox.innerText = "Résultat : " + data.translated;
+    resBox.innerText = dict.test_result_prefix + data.translated;
     loadStats();
     loadHistory();
   }
@@ -401,7 +764,8 @@
   }
 
   async function shutdownServer() {
-    if (!confirm("Voulez-vous vraiment éteindre le serveur de traduction ?")) {
+    const dict = I18N[activeLang] || I18N['en'];
+    if (!confirm(dict.confirm_shutdown)) {
       return;
     }
     isShuttingDown = true;
@@ -412,21 +776,21 @@
 
     const btn = document.getElementById('shutdown-btn');
     btn.disabled = true;
-    btn.innerText = "Arrêt en cours...";
+    btn.innerText = dict.btn_shutting_down;
     btn.style.opacity = "0.7";
 
     try {
       await fetch('/api/shutdown', { method: 'POST' });
     } catch (e) {
-      // Erreur réseau attendue lors de la coupure de socket
+      // Expected socket disconnect
     }
 
-    // Mise à jour visuelle
+    // Visual update
     const pill = document.getElementById('status-pill');
     pill.style.background = "rgba(239, 68, 68, 0.15)";
     pill.style.color = "var(--danger)";
     document.getElementById('status-dot').style.background = "var(--danger)";
-    document.getElementById('server-status').innerText = "Serveur éteint";
+    document.getElementById('server-status').innerText = dict.status_stopped;
 
     document.getElementById('shutdown-banner').style.display = "block";
     btn.style.display = "none";
@@ -435,7 +799,11 @@
     if (testBtn) testBtn.disabled = true;
   }
 
-  // Boucle d'actualisation
+  // Initial language setup: detect browser language immediately for instant localized first render
+  const initialBrowserLang = (navigator.language || navigator.userLanguage || 'en').slice(0, 2).toLowerCase();
+  applyLanguage(I18N[initialBrowserLang] ? initialBrowserLang : 'en');
+
+  // Refresh loops
   loadStatus();
   loadStats();
   loadHistory();

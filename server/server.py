@@ -23,7 +23,7 @@ CONFIG_INI = os.path.join(ROOT_DIR, "config.ini")
 config = configparser.ConfigParser()
 config.read(CONFIG_INI)
 
-DEFAULT_LANG = config.get("Translation", "TARGET_LANG", fallback=config.get("Translation", "LANG_CODE", fallback="fr"))
+DEFAULT_LANG = config.get("Translation", "TARGET_LANG", fallback=config.get("Translation", "LANG_CODE", fallback="en"))
 DEFAULT_MODEL = config.get("AI", "MODEL", fallback="qwen3:latest")
 DEFAULT_ENGINE = config.get("Translation", "ENGINE", fallback="google")
 DEFAULT_PORT = config.getint("Server", "PORT", fallback=5005)
