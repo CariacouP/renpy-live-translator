@@ -14,7 +14,17 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE_DIR, "server"))
 
 from storage import TranslationStorage
-from engines import protect_tags, restore_tags, GoogleEngine, OllamaEngine
+from engines import (
+    protect_tags,
+    restore_tags,
+    GoogleEngine,
+    DeepLEngine,
+    GroqEngine,
+    GeminiEngine,
+    MistralEngine,
+    LibreTranslateEngine,
+    OllamaEngine
+)
 from server import LiveTranslatorHandler, state
 
 class TestStorage(unittest.TestCase):
@@ -94,6 +104,66 @@ class TestEngines(unittest.TestCase):
         engine = GoogleEngine()
         result = engine.translate("Hello world", "fr")
         self.assertEqual(result, "Bonjour le monde")
+
+    @patch('urllib.request.urlopen')
+    def test_deepl_engine_mock(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "translations": [{"detected_source_language": "EN", "text": "Bonjour __TAG0__"}]
+        }).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        engine = DeepLEngine(api_key="mock-key:fx")
+        result = engine.translate("Hello [name]", "fr")
+        self.assertEqual(result, "Bonjour [name]")
+
+    @patch('urllib.request.urlopen')
+    def test_groq_engine_mock(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "choices": [{"message": {"content": "Bonjour __TAG0__"}}]
+        }).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        engine = GroqEngine(api_key="gsk_mock", model="llama-3.3-70b-versatile")
+        result = engine.translate("Hello [name]", "fr")
+        self.assertEqual(result, "Bonjour [name]")
+
+    @patch('urllib.request.urlopen')
+    def test_gemini_engine_mock(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "Bonjour __TAG0__"}]}}]
+        }).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        engine = GeminiEngine(api_key="AIzaMock", model="gemini-2.0-flash")
+        result = engine.translate("Hello [name]", "fr")
+        self.assertEqual(result, "Bonjour [name]")
+
+    @patch('urllib.request.urlopen')
+    def test_mistral_engine_mock(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "choices": [{"message": {"content": "Bonjour __TAG0__"}}]
+        }).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        engine = MistralEngine(api_key="mock_mistral", model="mistral-small-latest")
+        result = engine.translate("Hello [name]", "fr")
+        self.assertEqual(result, "Bonjour [name]")
+
+    @patch('urllib.request.urlopen')
+    def test_libretranslate_engine_mock(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "translatedText": "Bonjour __TAG0__"
+        }).encode('utf-8')
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        engine = LibreTranslateEngine(url="https://libretranslate.com", api_key="")
+        result = engine.translate("Hello [name]", "fr")
+        self.assertEqual(result, "Bonjour [name]")
 
     @patch('urllib.request.urlopen')
     def test_ollama_engine_mock(self, mock_urlopen):
@@ -176,6 +246,45 @@ class TestServerHandler(unittest.TestCase):
 
         if os.path.exists(temp_db.name):
             os.remove(temp_db.name)
+
+    def test_api_config_multi_engines(self):
+        handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)
+        handler.path = "/api/config"
+        payload = {
+            "engine": "deepl",
+            "target_lang": "es",
+            "deepl_api_key": "test_deepl:fx",
+            "groq_api_key": "test_groq",
+            "groq_model": "llama-3.3-70b-versatile",
+            "gemini_api_key": "test_gemini",
+            "gemini_model": "gemini-2.0-flash",
+            "mistral_api_key": "test_mistral",
+            "mistral_model": "mistral-small-latest",
+            "libretranslate_url": "https://test.libre.com",
+            "libretranslate_api_key": "test_libre"
+        }
+        handler.rfile = io.BytesIO(json.dumps(payload).encode('utf-8'))
+        handler.headers = {"Content-Length": len(handler.rfile.getvalue())}
+
+        sent_data = []
+        handler._send_json = lambda data, status=200: sent_data.append((status, data))
+        handler.do_POST()
+
+        self.assertEqual(len(sent_data), 1)
+        status, res = sent_data[0]
+        self.assertEqual(status, 200)
+        self.assertEqual(state.engine_name, "deepl")
+        self.assertEqual(state.target_lang, "es")
+        self.assertEqual(state.deepl_api_key, "test_deepl:fx")
+        self.assertEqual(state.groq_api_key, "test_groq")
+        self.assertEqual(state.gemini_api_key, "test_gemini")
+        self.assertEqual(state.mistral_api_key, "test_mistral")
+        self.assertEqual(state.libretranslate_url, "https://test.libre.com")
+
+        # Test get_engine return
+        eng = state.get_engine()
+        self.assertIsInstance(eng, DeepLEngine)
+        self.assertEqual(eng.api_key, "test_deepl:fx")
 
     def test_api_shutdown(self):
         handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)

@@ -17,10 +17,15 @@
 * **💾 Permanent Auto-Patching:** Every translated line is automatically saved into `game/tl/<language>/live_translations.rpy`. As you progress, the game permanently translates itself into standard Ren'Py translation files.
 * **🚀 0 ms Latency & Offline Mode:** All previously encountered lines are stored in a local SQLite cache and loaded directly into memory at game startup for instantaneous display.
 * **🔄 Hot-Swappable Translation Engines:**
-  * **Google Translate:** Lightning-fast (~100 to 200 ms per line), ideal for smooth, uninterrupted gameplay.
-  * **Local AI (Ollama):** For contextual, nuanced, and stylized translations (automatic detection of models such as `qwen`, `llama3`, `dolphin3`, `gemma`, `phi3`).
+  * **Google Translate:** Lightning-fast (~100 to 200 ms per line), ideal for smooth, uninterrupted gameplay without any key or setup.
+  * **DeepL API (Free / Pro):** Reference quality for European languages & literary dialogue (500,000 characters/month free).
+  * **Groq Cloud:** Ultra-fast (< 200 ms) cloud AI powered by Llama 3.3 70B & Mixtral with generous free tiers.
+  * **Google Gemini API:** Google's Gemini 2.0 Flash / 1.5 Flash models with free API access on Google AI Studio.
+  * **Mistral AI:** High-performance French & multilingual models (Mistral Small / Large).
+  * **LibreTranslate:** Open-source, private, and customizable endpoint.
+  * **Local AI (Ollama):** 100% offline and confidential (automatic detection of models like `qwen2.5`, `llama3.1`, `mistral`, `gemma2`).
 * **🛡️ Native Ren'Py Syntax Protection:** Style tags (`{b}`, `{i}`, `{color}`) and variable interpolations (`[player_name]`) are safely preserved and shielded from corruption.
-* **📊 Real-Time Web Dashboard:** Watch dialogue lines stream live as you play, monitor cache statistics, and switch languages or translation engines on the fly without restarting the game.
+* **📊 Real-Time Web Dashboard:** Watch dialogue lines stream live as you play, monitor cache statistics, configure API keys with one-click signup links, and switch languages or translation engines on the fly without restarting the game.
 * **🌐 Cross-Platform & Backwards Compatible:** Runs on macOS, Linux, and Windows. Fully compatible with both **Ren'Py 7** (Python 2) and **Ren'Py 8+** (Python 3).
 
 ---
@@ -47,7 +52,8 @@
 
 3. **Choose your settings in the Web Dashboard:**
    * **Target Language:** Select your desired language (French, Spanish, German, Japanese, etc.).
-   * **Translation Engine:** Choose **Google Translate** (instant) or **Local AI (Ollama)**.
+   * **Translation Engine:** Choose between **Google Translate**, **DeepL API**, **Groq Cloud**, **Gemini Flash**, **Mistral AI**, **LibreTranslate**, or **Local AI (Ollama)**.
+   * Enter your API key if applicable (direct links in the dashboard allow you to obtain free API keys in 1 click).
    * *All settings changed in the dashboard are permanently saved into `config.ini`!*
 
 4. **Launch your game once:**
@@ -73,31 +79,46 @@ The web dashboard is always accessible at [http://127.0.0.1:5005](http://127.0.0
 
 ---
 
-## 🧠 Using Local AI (Ollama)
+## ⚙️ Supported Translation Engines & Configuration
 
-If you prefer translating with a local LLM:
-1. Install and start [Ollama](https://ollama.com).
-2. Pull your preferred model (e.g., `ollama pull qwen2.5:7b`, `ollama pull llama3:8b`, or `ollama pull phi3:mini`).
-3. On the web dashboard ([http://127.0.0.1:5005](http://127.0.0.1:5005)), switch the engine to **Ollama** and select your model from the dropdown menu.
+| Engine | Type | Speed | Quality | Free Tier / Requirement |
+| :--- | :--- | :--- | :--- | :--- |
+| **Google Translate** | Cloud (gtx) | ⚡ ~100ms | ⭐⭐⭐ | 100% Free, no account or key required |
+| **DeepL API** | Cloud API | ⚡ ~200ms | ⭐⭐⭐⭐⭐ | 500,000 chars/month free ([DeepL Free](https://www.deepl.com/pro-api)) |
+| **Groq Cloud** | LLM Cloud | ⚡ ~150ms | ⭐⭐⭐⭐⭐ | Generous daily free quota ([Groq Console](https://console.groq.com/keys)) |
+| **Google Gemini** | LLM Cloud | ⚡ ~300ms | ⭐⭐⭐⭐⭐ | 15 RPM free ([Google AI Studio](https://aistudio.google.com/app/apikey)) |
+| **Mistral AI** | LLM Cloud | ⚡ ~300ms | ⭐⭐⭐⭐⭐ | Free experimentation tier ([Mistral Console](https://console.mistral.ai/api-keys/)) |
+| **LibreTranslate** | Open-source | ⏱️ ~500ms | ⭐⭐⭐ | Free public instances or self-hosted |
+| **Ollama** | Local LLM | ⏱️ ~0.8s-1.5s | ⭐⭐⭐⭐⭐ | 100% Free & Unlimited (offline on your machine) |
 
----
-
-## ⚙️ Configuration
-
-Default settings can be adjusted in `config.ini`:
+Settings can be managed directly in the Web Dashboard or in `config.ini`:
 
 ```ini
 [Translation]
-# Target language code (e.g., en, fr, es, de, it, ja, ru)
-TARGET_LANG = fr
+target_lang = fr
+engine = google
+
+[DeepL]
+api_key = 
+
+[Groq]
+api_key = 
+model = llama-3.3-70b-versatile
+
+[Gemini]
+api_key = 
+model = gemini-2.0-flash
+
+[Mistral]
+api_key = 
+model = mistral-small-latest
+
+[LibreTranslate]
+url = https://libretranslate.com
+api_key = 
 
 [AI]
-# Default local LLM model via Ollama
-MODEL = qwen3:latest
-
-[Server]
-# Local HTTP server port
-PORT = 5005
+model = qwen3:latest
 ```
 
 You can also change the target language and engine live at any time through the web dashboard.

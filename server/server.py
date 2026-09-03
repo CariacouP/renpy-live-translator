@@ -26,7 +26,16 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from storage import TranslationStorage
-from engines import GoogleEngine, OllamaEngine, get_ollama_models
+from engines import (
+    GoogleEngine,
+    DeepLEngine,
+    GroqEngine,
+    GeminiEngine,
+    MistralEngine,
+    LibreTranslateEngine,
+    OllamaEngine,
+    get_ollama_models
+)
 
 ROOT_DIR = os.path.dirname(BASE_DIR)
 CONFIG_INI = os.path.join(ROOT_DIR, "config.ini")
@@ -36,9 +45,19 @@ config = configparser.ConfigParser()
 config.read(CONFIG_INI)
 
 DEFAULT_LANG = config.get("Translation", "TARGET_LANG", fallback=config.get("Translation", "LANG_CODE", fallback="en"))
-DEFAULT_MODEL = config.get("AI", "MODEL", fallback="qwen3:latest")
 DEFAULT_ENGINE = config.get("Translation", "ENGINE", fallback="google")
 DEFAULT_PORT = config.getint("Server", "PORT", fallback=5005)
+
+DEFAULT_OLLAMA_MODEL = config.get("AI", "MODEL", fallback="qwen3:latest")
+DEFAULT_DEEPL_KEY = config.get("DeepL", "api_key", fallback="")
+DEFAULT_GROQ_KEY = config.get("Groq", "api_key", fallback="")
+DEFAULT_GROQ_MODEL = config.get("Groq", "model", fallback="llama-3.3-70b-versatile")
+DEFAULT_GEMINI_KEY = config.get("Gemini", "api_key", fallback="")
+DEFAULT_GEMINI_MODEL = config.get("Gemini", "model", fallback="gemini-2.0-flash")
+DEFAULT_MISTRAL_KEY = config.get("Mistral", "api_key", fallback="")
+DEFAULT_MISTRAL_MODEL = config.get("Mistral", "model", fallback="mistral-small-latest")
+DEFAULT_LIBRE_URL = config.get("LibreTranslate", "url", fallback="https://libretranslate.com")
+DEFAULT_LIBRE_KEY = config.get("LibreTranslate", "api_key", fallback="")
 
 LANG_NAMES = {
     "fr": "french",
@@ -56,15 +75,51 @@ LANG_NAMES = {
 class ServerState:
     def __init__(self):
         self.storage = TranslationStorage()
-        self.google_engine = GoogleEngine()
-        self.ollama_engine = OllamaEngine(model=DEFAULT_MODEL)
-        self.engine_name = DEFAULT_ENGINE  # "google" or "ollama"
+        self.engine_name = DEFAULT_ENGINE
         self.target_lang = DEFAULT_LANG
-        self.model_name = DEFAULT_MODEL
+        
+        self.ollama_model = DEFAULT_OLLAMA_MODEL
+        self.deepl_api_key = DEFAULT_DEEPL_KEY
+        self.groq_api_key = DEFAULT_GROQ_KEY
+        self.groq_model = DEFAULT_GROQ_MODEL
+        self.gemini_api_key = DEFAULT_GEMINI_KEY
+        self.gemini_model = DEFAULT_GEMINI_MODEL
+        self.mistral_api_key = DEFAULT_MISTRAL_KEY
+        self.mistral_model = DEFAULT_MISTRAL_MODEL
+        self.libretranslate_url = DEFAULT_LIBRE_URL
+        self.libretranslate_api_key = DEFAULT_LIBRE_KEY
+
+        self.google_engine = GoogleEngine()
+        self.deepl_engine = DeepLEngine(api_key=self.deepl_api_key)
+        self.groq_engine = GroqEngine(api_key=self.groq_api_key, model=self.groq_model)
+        self.gemini_engine = GeminiEngine(api_key=self.gemini_api_key, model=self.gemini_model)
+        self.mistral_engine = MistralEngine(api_key=self.mistral_api_key, model=self.mistral_model)
+        self.libretranslate_engine = LibreTranslateEngine(url=self.libretranslate_url, api_key=self.libretranslate_api_key)
+        self.ollama_engine = OllamaEngine(model=self.ollama_model)
 
     def get_engine(self):
-        if self.engine_name == "ollama":
-            self.ollama_engine.model = self.model_name
+        eng = (self.engine_name or "google").lower()
+        if eng == "deepl":
+            self.deepl_engine.api_key = self.deepl_api_key
+            return self.deepl_engine
+        elif eng == "groq":
+            self.groq_engine.api_key = self.groq_api_key
+            self.groq_engine.model = self.groq_model
+            return self.groq_engine
+        elif eng == "gemini":
+            self.gemini_engine.api_key = self.gemini_api_key
+            self.gemini_engine.model = self.gemini_model
+            return self.gemini_engine
+        elif eng == "mistral":
+            self.mistral_engine.api_key = self.mistral_api_key
+            self.mistral_engine.model = self.mistral_model
+            return self.mistral_engine
+        elif eng == "libretranslate":
+            self.libretranslate_engine.url = self.libretranslate_url
+            self.libretranslate_engine.api_key = self.libretranslate_api_key
+            return self.libretranslate_engine
+        elif eng == "ollama":
+            self.ollama_engine.model = self.ollama_model
             return self.ollama_engine
         return self.google_engine
 
@@ -117,14 +172,23 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
             return
 
         elif path == "/api/status":
-            models = get_ollama_models()
+            ollama_models = get_ollama_models()
             self._send_json({
                 "status": "online",
                 "server_path": os.path.abspath(__file__),
                 "engine": state.engine_name,
                 "target_lang": state.target_lang,
-                "model": state.model_name,
-                "available_models": models if models else [state.model_name]
+                "model": state.ollama_model,
+                "available_models": ollama_models if ollama_models else [state.ollama_model],
+                "deepl_api_key": state.deepl_api_key,
+                "groq_api_key": state.groq_api_key,
+                "groq_model": state.groq_model,
+                "gemini_api_key": state.gemini_api_key,
+                "gemini_model": state.gemini_model,
+                "mistral_api_key": state.mistral_api_key,
+                "mistral_model": state.mistral_model,
+                "libretranslate_url": state.libretranslate_url,
+                "libretranslate_api_key": state.libretranslate_api_key
             })
             return
 
@@ -199,8 +263,8 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
             engine = state.get_engine()
             translated = engine.translate(text, state.target_lang)
 
-            # 3. Sauvegarder dans le cache SQLite
-            if translated and translated != text:
+            # 3. Sauvegarder dans le cache SQLite (si pas un message d'erreur interne)
+            if translated and not translated.startswith("[") and translated != text:
                 state.storage.save_translation(game_id, text, translated, state.target_lang)
 
             self._send_json({
@@ -213,21 +277,47 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/config":
             if "engine" in data:
-                state.engine_name = data["engine"]
+                state.engine_name = str(data["engine"])
             if "target_lang" in data:
-                state.target_lang = data["target_lang"]
+                state.target_lang = str(data["target_lang"])
             if "model" in data:
-                state.model_name = data["model"]
+                state.ollama_model = str(data["model"])
+            if "deepl_api_key" in data:
+                state.deepl_api_key = str(data["deepl_api_key"]).strip()
+            if "groq_api_key" in data:
+                state.groq_api_key = str(data["groq_api_key"]).strip()
+            if "groq_model" in data:
+                state.groq_model = str(data["groq_model"]).strip()
+            if "gemini_api_key" in data:
+                state.gemini_api_key = str(data["gemini_api_key"]).strip()
+            if "gemini_model" in data:
+                state.gemini_model = str(data["gemini_model"]).strip()
+            if "mistral_api_key" in data:
+                state.mistral_api_key = str(data["mistral_api_key"]).strip()
+            if "mistral_model" in data:
+                state.mistral_model = str(data["mistral_model"]).strip()
+            if "libretranslate_url" in data:
+                state.libretranslate_url = str(data["libretranslate_url"]).strip()
+            if "libretranslate_api_key" in data:
+                state.libretranslate_api_key = str(data["libretranslate_api_key"]).strip()
 
             # Persist changes to config.ini
             try:
-                if not config.has_section("Translation"):
-                    config.add_section("Translation")
-                if not config.has_section("AI"):
-                    config.add_section("AI")
+                for sec in ["Translation", "AI", "DeepL", "Groq", "Gemini", "Mistral", "LibreTranslate"]:
+                    if not config.has_section(sec):
+                        config.add_section(sec)
                 config.set("Translation", "TARGET_LANG", state.target_lang)
                 config.set("Translation", "ENGINE", state.engine_name)
-                config.set("AI", "MODEL", state.model_name)
+                config.set("AI", "MODEL", state.ollama_model)
+                config.set("DeepL", "api_key", state.deepl_api_key)
+                config.set("Groq", "api_key", state.groq_api_key)
+                config.set("Groq", "model", state.groq_model)
+                config.set("Gemini", "api_key", state.gemini_api_key)
+                config.set("Gemini", "model", state.gemini_model)
+                config.set("Mistral", "api_key", state.mistral_api_key)
+                config.set("Mistral", "model", state.mistral_model)
+                config.set("LibreTranslate", "url", state.libretranslate_url)
+                config.set("LibreTranslate", "api_key", state.libretranslate_api_key)
                 with open(CONFIG_INI, "w", encoding="utf-8") as f:
                     config.write(f)
             except Exception:
@@ -236,7 +326,16 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "updated", "config": {
                 "engine": state.engine_name,
                 "target_lang": state.target_lang,
-                "model": state.model_name
+                "model": state.ollama_model,
+                "deepl_api_key": state.deepl_api_key,
+                "groq_api_key": state.groq_api_key,
+                "groq_model": state.groq_model,
+                "gemini_api_key": state.gemini_api_key,
+                "gemini_model": state.gemini_model,
+                "mistral_api_key": state.mistral_api_key,
+                "mistral_model": state.mistral_model,
+                "libretranslate_url": state.libretranslate_url,
+                "libretranslate_api_key": state.libretranslate_api_key
             }})
             return
 
