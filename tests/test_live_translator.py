@@ -54,6 +54,13 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(len(history), 2)
         self.assertEqual(history[0]["source_text"], "Yes")
 
+    def test_register_game(self):
+        self.storage.register_game("NewGame123", "/path/to/game")
+        games = self.storage.get_games()
+        self.assertTrue(any(g["game_id"] == "NewGame123" for g in games))
+        stats = self.storage.get_stats()
+        self.assertEqual(stats["total_games"], 1)
+
     def test_export(self):
         self.storage.save_translation("TestGame", "Start", "Commencer", "fr")
         rpy_export = self.storage.export_translations("TestGame", "fr", "rpy")
@@ -286,6 +293,33 @@ class TestServerHandler(unittest.TestCase):
         self.assertIsInstance(eng, DeepLEngine)
         self.assertEqual(eng.api_key, "test_deepl:fx")
 
+        # Restore state and config.ini so tests do not pollute production config
+        state.engine_name = "google"
+        state.target_lang = "fr"
+        state.deepl_api_key = ""
+        state.groq_api_key = ""
+        state.gemini_api_key = ""
+        state.mistral_api_key = ""
+        state.libretranslate_url = ""
+        state.libretranslate_api_key = ""
+        try:
+            import configparser
+            from server import CONFIG_INI
+            cfg = configparser.ConfigParser()
+            cfg.read(CONFIG_INI)
+            if not cfg.has_section("Translation"):
+                cfg.add_section("Translation")
+            cfg.set("Translation", "ENGINE", "google")
+            cfg.set("Translation", "TARGET_LANG", "fr")
+            for s in ["DeepL", "Groq", "Gemini", "Mistral", "LibreTranslate"]:
+                if cfg.has_section(s):
+                    for k in cfg.options(s):
+                        cfg.set(s, k, "")
+            with open(CONFIG_INI, "w", encoding="utf-8") as f:
+                cfg.write(f)
+        except Exception:
+            pass
+
     def test_api_shutdown(self):
         handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)
         handler.path = "/api/shutdown"
@@ -315,10 +349,16 @@ class TestServerHandler(unittest.TestCase):
         with open(rpy_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
         
-        # Strip out the 'init -999 python:' and config hooks for testing
+        # Strip out the 'init ... python:' and config hooks for testing
         py_lines = []
+        skip_block = False
         for line in lines:
-            if line.strip().startswith("init ") or "config.say_menu_text_filter" in line or "_live_translator_instance = LiveTranslator()" in line:
+            if line.strip().startswith("init 999"):
+                skip_block = True
+                continue
+            if skip_block:
+                continue
+            if line.strip().startswith("init -999") or "config.say_menu_text_filter" in line or "_live_translator_instance = LiveTranslator()" in line:
                 continue
             if line.startswith("    "):
                 py_lines.append(line[4:])
@@ -345,8 +385,11 @@ class TestServerHandler(unittest.TestCase):
 
             # Test 2: If server is already running, spawned_server remains False
             with patch.object(instance, '_is_server_running', return_value=True):
-                instance._ensure_server()
-                self.assertFalse(instance.spawned_server)
+                with patch.object(instance, '_prompt_target_language', return_value="fr"):
+                    with patch.object(instance, '_set_server_language') as mock_set_lang:
+                        instance._ensure_server()
+                        self.assertFalse(instance.spawned_server)
+                        mock_set_lang.assert_called_with("fr")
 
             # Test 3: Cleanup does NOT shutdown server if spawned_server is False
             with patch.object(instance.opener, 'open') as mock_open:
@@ -374,6 +417,263 @@ class TestServerHandler(unittest.TestCase):
                 with open(plugin_mock, "r", encoding="utf-8") as f:
                     written = f.read()
                 self.assertTrue("server.py" in written)
+
+            # Test 6: Language choice parser
+            self.assertEqual(instance._parse_lang_choice("Français (fr)"), "fr")
+            self.assertEqual(instance._parse_lang_choice("English (en)"), "en")
+            self.assertEqual(instance._parse_lang_choice("Español (es)"), "es")
+            self.assertEqual(instance._parse_lang_choice("Deutsch (de)"), "de")
+            self.assertEqual(instance._parse_lang_choice("Italiano (it)"), "it")
+            self.assertEqual(instance._parse_lang_choice("Português (pt)"), "pt")
+            self.assertEqual(instance._parse_lang_choice("Русский (ru)"), "ru")
+            self.assertEqual(instance._parse_lang_choice("日本語 (ja)"), "ja")
+            self.assertEqual(instance._parse_lang_choice("中文 (zh)"), "zh")
+
+            # Test 7: Verify _should_skip safety filtering
+            with patch.object(LiveTranslatorClass, '__init__', lambda self: None):
+                instance = LiveTranslatorClass()
+                # Translatable dialogue elements
+                self.assertFalse(instance._should_skip("Start Game"))
+                self.assertFalse(instance._should_skip("Hello world!"))
+                self.assertFalse(instance._should_skip("Bonjour"))
+
+                # Non-translatable technical elements
+                self.assertTrue(instance._should_skip(""))
+                self.assertTrue(instance._should_skip("   "))
+                self.assertTrue(instance._should_skip("12345"))
+                self.assertTrue(instance._should_skip("..."))
+                self.assertTrue(instance._should_skip("---"))
+
+
+class TestRegression(unittest.TestCase):
+    """Tests de non-régression pour garantir la fluidité (60 FPS), la détection de jeu et la traduction partielle."""
+
+    def test_regression_register_game_endpoint(self):
+        """Vérifie que /api/register_game enregistre immédiatement le jeu sans exiger de traduction préalable."""
+        temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        old_storage = state.storage
+        state.storage = TranslationStorage(temp_db.name)
+
+        try:
+            handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)
+            handler.path = "/api/register_game"
+            payload = {"game_id": "SuperGameVN", "game_dir": "/path/to/game", "target_lang": "fr"}
+            body = json.dumps(payload).encode('utf-8')
+            handler.rfile = io.BytesIO(body)
+            handler.headers = {"Content-Length": len(body)}
+
+            sent_data = []
+            handler._send_json = lambda data, status=200: sent_data.append((status, data))
+            handler.do_POST()
+
+            self.assertEqual(len(sent_data), 1)
+            status, res = sent_data[0]
+            self.assertEqual(status, 200)
+            self.assertEqual(res["status"], "registered")
+            self.assertEqual(res["game_id"], "SuperGameVN")
+
+            # Vérifier que le jeu est immédiatement compté et listé
+            stats = state.storage.get_stats()
+            self.assertEqual(stats["total_games"], 1)
+            games = state.storage.get_games()
+            self.assertEqual(len(games), 1)
+            self.assertEqual(games[0]["game_id"], "SuperGameVN")
+        finally:
+            state.storage = old_storage
+            if os.path.exists(temp_db.name):
+                os.remove(temp_db.name)
+
+    def test_regression_translate_respects_target_lang(self):
+        """Vérifie que /api/translate prend en compte target_lang dans la requête et synchronise l'état."""
+        temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        old_storage = state.storage
+        state.storage = TranslationStorage(temp_db.name)
+
+        try:
+            handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)
+            handler.path = "/api/translate"
+            payload = {"text": "Good morning", "game_id": "TestGame", "target_lang": "es"}
+            body = json.dumps(payload).encode('utf-8')
+            handler.rfile = io.BytesIO(body)
+            handler.headers = {"Content-Length": len(body)}
+
+            sent_data = []
+            handler._send_json = lambda data, status=200: sent_data.append((status, data))
+
+            with patch.object(state, 'get_engine') as mock_engine_fn:
+                mock_engine = MagicMock()
+                mock_engine.translate.return_value = "Buenos días"
+                mock_engine_fn.return_value = mock_engine
+
+                handler.do_POST()
+
+                self.assertEqual(state.target_lang, "es")
+                mock_engine.translate.assert_called_with("Good morning", "es")
+                self.assertEqual(len(sent_data), 1)
+                self.assertEqual(sent_data[0][1]["target_lang"], "es")
+        finally:
+            state.storage = old_storage
+            if os.path.exists(temp_db.name):
+                os.remove(temp_db.name)
+
+    def test_regression_is_dialogue_text_filters_ui(self):
+        """Vérifie que is_dialogue_text filtre les boutons d'interface (0 lag) et accepte les dialogues."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        py_lines = []
+        skip_block = False
+        for line in lines:
+            if line.strip().startswith("init 999"):
+                skip_block = True
+                continue
+            if skip_block:
+                continue
+            if line.strip().startswith("init -999") or "config.say_menu_text_filter" in line or "_live_translator_instance = LiveTranslator()" in line:
+                continue
+            if line.startswith("    "):
+                py_lines.append(line[4:])
+            else:
+                py_lines.append(line)
+
+        test_scope = {"config": type("MockConfig", (), {"gamedir": "/mock/game", "name": "TestGame"})()}
+        exec("".join(py_lines), test_scope)
+
+        LiveTranslatorClass = test_scope["LiveTranslator"]
+        with patch.object(LiveTranslatorClass, '__init__', lambda self: None):
+            instance = LiveTranslatorClass()
+            # UI elements must be rejected (0 ms, no HTTP)
+            self.assertFalse(instance.is_dialogue_text("Start"))
+            self.assertFalse(instance.is_dialogue_text("Load"))
+            self.assertFalse(instance.is_dialogue_text("Save"))
+            self.assertFalse(instance.is_dialogue_text("Preferences"))
+            self.assertFalse(instance.is_dialogue_text("Q.Save"))
+            self.assertFalse(instance.is_dialogue_text("v1.0.4"))
+
+            # Real dialogue sentences must be accepted
+            self.assertTrue(instance.is_dialogue_text("Hello there, how are you?"))
+            self.assertTrue(instance.is_dialogue_text("Wait!"))
+            self.assertTrue(instance.is_dialogue_text("What...?"))
+            self.assertTrue(instance.is_dialogue_text("I was waiting for you all morning."))
+
+    def test_regression_no_menu_freeze(self):
+        """Vérifie que translate_string protège les menus contre le lag en vérifiant is_dialogue_text."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Si translate_string est branché, il DOIT obligatoirement filtrer avec is_dialogue_text
+        if "_live_translate_string" in content:
+            self.assertIn("is_dialogue_text(s)", content)
+
+    def test_regression_dialogue_filter_present(self):
+        """Vérifie que config.say_menu_text_filter est actif dès init -999 et sécurisé dans init 999."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("config.say_menu_text_filter = _say_menu_filter_hook", content)
+        self.assertIn("init 999 python:", content)
+        self.assertIn("config.say_menu_text_filter = _chained_filter", content)
+
+    def test_regression_memory_cache_instant_deduplication(self):
+        """Vérifie que la deuxième consultation d'une phrase est instantanée sans appel HTTP."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        py_lines = []
+        skip_block = False
+        for line in lines:
+            if line.strip().startswith("init 999"):
+                skip_block = True
+                continue
+            if skip_block:
+                continue
+            if line.strip().startswith("init -999") or "config.say_menu_text_filter" in line or "_live_translator_instance = LiveTranslator()" in line:
+                continue
+            if line.startswith("    "):
+                py_lines.append(line[4:])
+            else:
+                py_lines.append(line)
+
+        test_scope = {"config": type("MockConfig", (), {"gamedir": "/mock/game", "name": "TestGame"})()}
+        exec("".join(py_lines), test_scope)
+
+        LiveTranslatorClass = test_scope["LiveTranslator"]
+        with patch.object(LiveTranslatorClass, '__init__', lambda self: None):
+            instance = LiveTranslatorClass()
+            instance.enabled = True
+            instance.memory_cache = {"Bonjour": "Hello"}
+            instance.opener = MagicMock()
+
+            # Dès que présent dans le cache, opener n'est jamais sollicité
+            result = instance.translate("Bonjour")
+            self.assertEqual(result, "Hello")
+            instance.opener.open.assert_not_called()
+
+    def test_regression_native_language_activation(self):
+        """Vérifie que le plugin active formellement la langue cible native de Ren'Py (default_language & change_language)."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("config.default_language = target_folder", content)
+        self.assertIn("renpy.change_language(target_folder)", content)
+        self.assertIn("def lang_folder(self):", content)
+
+    def test_regression_robust_game_dir_resolution(self):
+        """Vérifie que la résolution du dossier de jeu explore de multiples sources fiables et ne dépend pas aveuglément de getcwd."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("def _get_game_dir(self):", content)
+        self.assertIn("os.path.dirname(os.path.abspath(__file__))", content)
+        self.assertIn("config.gamedir", content)
+
+    def test_regression_live_in_memory_stl_injection(self):
+        """Vérifie que les nouvelles traductions sont injectées directement dans le StringTranslator en mémoire de Ren'Py."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("stl.translations[source_text] = translated_text", content)
+
+    def test_regression_no_hook_cascade(self):
+        """Vérifie l'absence de prolifération de hooks qui causait des retraductions en cascade (5 requêtes par réplique)."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Ne doit PAS surcharger Character.__call__, renpy.exports.say ni Text.__init__
+        self.assertNotIn("renpy.character.Character.__call__ = ", content)
+        self.assertNotIn("renpy.exports.say = ", content)
+        self.assertNotIn("_rpy_text.Text.__init__ = ", content)
+
+    def test_regression_timeout_adequate(self):
+        """Vérifie que le TIMEOUT est au minimum de 4.0s pour éviter d'abandonner sur des phrases longues."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        m = re.search(r'TIMEOUT\s*=\s*([0-9.]+)', content)
+        self.assertIsNotNone(m, "TIMEOUT constant not found")
+        timeout_val = float(m.group(1))
+        self.assertGreaterEqual(timeout_val, 4.0, "TIMEOUT must be at least 4.0s to avoid false timeouts on Google/LLM")
+
+    def test_regression_init_priority_range(self):
+        """Vérifie qu'aucune priorité init ne dépasse les limites strictes de Ren'Py (-999 à 999)."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        matches = re.findall(r'init\s+(-?\d+)', content)
+        for val_str in matches:
+            val = int(val_str)
+            self.assertTrue(-999 <= val <= 999, f"Init priority {val} exceeds Ren'Py bounds (-999 to 999)")
+
 
 if __name__ == "__main__":
     unittest.main()

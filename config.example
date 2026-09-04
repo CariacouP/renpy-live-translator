@@ -1,0 +1,54 @@
+# ==============================================================================
+# Ren'Py Live Translator - Configuration Template
+# ==============================================================================
+# Copiez ce fichier sous le nom "config.ini" pour personnaliser votre configuration.
+# Le fichier "config.ini" est exclu du suivi Git (.gitignore) pour protéger vos clés API.
+# ==============================================================================
+
+[Translation]
+# Langue cible par défaut :
+# fr (Français), en (English), es (Español), de (Deutsch),
+# it (Italiano), pt (Português), ru (Русский), ja (日本語), zh (中文)
+target_lang = fr
+
+# Moteur de traduction actif :
+# Options : google | deepl | groq | gemini | mistral | libretranslate | ollama
+# Note : "google" est gratuit et fonctionne immédiatement sans clé API.
+engine = google
+
+[DeepL]
+# Clé API DeepL (DeepL API Free ou Pro). Exemple : xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx
+api_key = 
+
+[Groq]
+# Clé API Groq (inférence ultra-rapide). Obtenez-en une sur console.groq.com
+api_key = 
+# Modèles recommandés : llama-3.3-70b-versatile, llama-3.1-8b-instant, mixtral-8x7b-32768
+model = llama-3.3-70b-versatile
+
+[Gemini]
+# Clé API Google Gemini (Google AI Studio). Obtenez-en une sur aistudio.google.com
+api_key = 
+# Modèles recommandés : gemini-2.0-flash, gemini-1.5-flash, gemini-1.5-pro
+model = gemini-2.0-flash
+
+[Mistral]
+# Clé API Mistral AI. Obtenez-en une sur console.mistral.ai
+api_key = 
+# Modèles recommandés : mistral-small-latest, open-mistral-nemo, mistral-large-latest
+model = mistral-small-latest
+
+[LibreTranslate]
+# URL de l'instance LibreTranslate (instance publique ou locale auto-hébergée)
+url = https://libretranslate.com
+# Clé API optionnelle
+api_key = 
+
+[AI]
+# Modèle local Ollama (nécessite Ollama installé et lancé en arrière-plan)
+# Exemples : qwen3:latest, llama3:8b, mistral:latest, gemma2:9b
+model = qwen3:latest
+
+[Server]
+# Port local d'écoute du serveur Live Translator (défaut : 5005)
+port = 5005

@@ -1,5 +1,5 @@
 ## ==============================================================================
-## 00_translator.rpy - Ren'Py Live Translator Hook
+## 00_translator.rpy - Ren'Py Live Translator Hook (Ultra-Fast Edition)
 ## ==============================================================================
 ## Drop this file into the 'game/' folder of your Ren'Py game.
 ## It intercepts dialogues and choices on the fly, contacts the local server
@@ -23,9 +23,6 @@ init -999 python:
     ## --------------------------------------------------------------------------
     # Optional path to server.py or to the renpy-live-translator root directory.
     # If left empty, the plugin will search for server.py automatically.
-    # Examples:
-    # Windows : SERVER_PATH = r"C:\Tools\renpy-live-translator\server\server.py"
-    # macOS   : SERVER_PATH = "/Users/username/renpy-live-translator/server/server.py"
     SERVER_PATH = ""
 
     # Behavior when the server is offline at game launch:
@@ -34,6 +31,12 @@ init -999 python:
     # "disabled" : Never auto-starts the server (manual startup only)
     AUTO_START_MODE = "ask"
 
+    # Prompt to choose target language on game launch:
+    # "always"   : Shows a native language selection popup at each game launch
+    # "ask"      : Shows language selection if server was started by the game
+    # "disabled" : Uses the language currently set in dashboard / config.ini
+    PROMPT_LANGUAGE_ON_START = "always"
+
     # Automatically stop the server on game exit ONLY IF the game started it itself:
     AUTO_STOP_SERVER = True
 
@@ -41,19 +44,22 @@ init -999 python:
     if sys.version_info[0] < 3:
         import urllib2 as _url_req
         import urllib2 as _url_err
+        import httplib as _http_client
         _is_py2 = True
         _str_types = (str, unicode)
     else:
         import urllib.request as _url_req
         import urllib.error as _url_err
+        import http.client as _http_client
         _is_py2 = False
         _str_types = (str,)
 
     class LiveTranslator(object):
         SERVER_URL = "http://127.0.0.1:5005/api/translate"
         SERVER_STATUS_URL = "http://127.0.0.1:5005/api/status"
+        SERVER_CONFIG_URL = "http://127.0.0.1:5005/api/config"
         SERVER_SHUTDOWN_URL = "http://127.0.0.1:5005/api/shutdown"
-        TIMEOUT = 2.0  # Max timeout per dialogue line to prevent game freezing
+        TIMEOUT = 4.5  # Reliable timeout per dialogue line ensuring full translation returns
 
         def __init__(self):
             self.memory_cache = {}
@@ -61,8 +67,9 @@ init -999 python:
             self.enabled = True
             self.spawned_server = False
             self.server_process = None
+            self.target_lang = "fr"
             self.game_id = self._get_game_id()
-            self.game_dir = getattr(config, 'gamedir', None) or os.getcwd()
+            self.game_dir = self._get_game_dir()
 
             try:
                 self.opener = _url_req.build_opener(_url_req.ProxyHandler({}))
@@ -75,8 +82,30 @@ init -999 python:
             # Pre-load translations already saved locally in game/tl/
             self._load_local_translations()
 
-            # Check server status and auto-start if needed
+            # Check server status, auto-start and prompt language if configured
             self._ensure_server()
+
+            # Immediately register game with server
+            self._register_game()
+
+        def _register_game(self):
+            """Registers this game with the server immediately on launch."""
+            try:
+                payload = json.dumps({
+                    "game_id": self.game_id,
+                    "game_dir": self.game_dir,
+                    "target_lang": self.target_lang
+                })
+                if not _is_py2 and isinstance(payload, str):
+                    payload = payload.encode('utf-8')
+                req = _url_req.Request(
+                    "http://127.0.0.1:5005/api/register_game",
+                    data=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                self.opener.open(req, timeout=1.5)
+            except Exception:
+                pass
 
         def _get_game_id(self):
             """Extract a clean identifier for this game."""
@@ -88,12 +117,53 @@ init -999 python:
                 pass
             return "RenpyGame"
 
+        @property
+        def lang_folder(self):
+            """Map target language code to Ren'Py standard tl folder name."""
+            lang_map = {
+                "fr": "french",
+                "en": "None",
+                "es": "spanish",
+                "de": "german",
+                "it": "italian",
+                "pt": "portuguese",
+                "ru": "russian",
+                "ja": "japanese",
+                "zh": "chinese"
+            }
+            return lang_map.get(getattr(self, 'target_lang', 'fr'), "french")
+
+        def _get_game_dir(self):
+            """Reliably determines the game/ directory across all platforms and execution environments."""
+            candidates = []
+            try:
+                candidates.append(os.path.dirname(os.path.abspath(__file__)))
+            except Exception:
+                pass
+            try:
+                if hasattr(config, 'gamedir') and config.gamedir:
+                    candidates.append(config.gamedir)
+            except Exception:
+                pass
+            try:
+                if hasattr(config, 'basedir') and config.basedir:
+                    candidates.append(os.path.join(config.basedir, 'game'))
+            except Exception:
+                pass
+            candidates.append(os.path.join(os.getcwd(), 'game'))
+            candidates.append(os.getcwd())
+
+            for d in candidates:
+                if d and os.path.isdir(d):
+                    if os.path.isdir(os.path.join(d, 'tl')) or os.path.isfile(os.path.join(d, '00_translator.rpy')):
+                        return d
+            return candidates[0] if candidates else os.getcwd()
+
         def _remember_server_path(self, server_path):
             """Saves server_path globally and writes it into 00_translator.rpy if SERVER_PATH is empty."""
             if not server_path or not os.path.isfile(server_path):
                 return
 
-            # 1. Save globally in ~/.renpy_translator_path
             try:
                 hist_path = os.path.expanduser("~/.renpy_translator_path")
                 with open(hist_path, "w") as f:
@@ -101,7 +171,6 @@ init -999 python:
             except Exception:
                 pass
 
-            # 2. Update SERVER_PATH in 00_translator.rpy directly if currently empty
             global SERVER_PATH
             if not SERVER_PATH:
                 SERVER_PATH = server_path
@@ -120,7 +189,7 @@ init -999 python:
                 except Exception:
                     pass
 
-        def _is_server_running(self, timeout=0.4):
+        def _is_server_running(self, timeout=0.3):
             """Checks if the Live Translator server is reachable and active."""
             try:
                 req = _url_req.Request(self.SERVER_STATUS_URL)
@@ -139,51 +208,154 @@ init -999 python:
             return False
 
         def _ask_user_dialog(self):
-            """Displays a native confirmation dialog in English asking to start the server."""
-            # Windows native MessageBox
+            """Displays a native confirmation dialog asking to start the server."""
             if sys.platform.startswith("win"):
                 try:
                     import ctypes
-                    # MB_YESNO = 0x04, MB_ICONQUESTION = 0x20, MB_SETFOREGROUND = 0x40000
                     res = ctypes.windll.user32.MessageBoxW(
                         0,
-                        u"Live Translator server is not running.\n\nWould you like to start it now in the background?",
+                        u"Le serveur Live Translator n'est pas lancé.\n\nSouhaitez-vous le démarrer en arrière-plan ?",
                         u"Ren'Py Live Translator",
                         0x04 | 0x20 | 0x40000
                     )
-                    return res == 6  # 6 == IDYES
+                    return res == 6
                 except Exception:
                     return True
 
-            # macOS AppleScript dialog
             elif sys.platform == "darwin":
                 try:
-                    script = 'display dialog "Live Translator server is not running.\\n\\nWould you like to start it now in the background?" buttons {"No", "Yes"} default button "Yes" with title "Ren\'Py Live Translator"'
+                    script = 'display dialog "Le serveur Live Translator n\'est pas lancé.\\n\\nSouhaitez-vous le démarrer en arrière-plan ?" buttons {"Non", "Oui"} default button "Oui" with title "Ren\'Py Live Translator"'
                     p = subprocess.Popen(['osascript', '-e', script], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     out, _ = p.communicate()
                     out_str = out.decode('utf-8', 'ignore') if not isinstance(out, str) else out
-                    return "Yes" in out_str
+                    return "Oui" in out_str or "Yes" in out_str
                 except Exception:
                     return True
 
-            # Linux Zenity dialog (fallback to True if not available)
             else:
                 try:
                     p = subprocess.Popen([
                         'zenity', '--question',
                         '--title=Ren\'Py Live Translator',
-                        '--text=Live Translator server is not running.\n\nWould you like to start it now in the background?'
+                        '--text=Le serveur Live Translator n\'est pas lancé.\n\nSouhaitez-vous le démarrer en arrière-plan ?'
                     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     p.communicate()
                     return p.returncode == 0
                 except Exception:
                     return True
 
+        def _prompt_target_language(self):
+            """Displays a native dialog allowing the user to select the target language."""
+            if sys.platform == "darwin":
+                try:
+                    script = (
+                        'set langList to {"Français (fr)", "English (en)", "Español (es)", "Deutsch (de)", "Italiano (it)", "Português (pt)", "Русский (ru)", "日本語 (ja)", "中文 (zh)"}\n'
+                        'set chosen to choose from list langList with title "🎮 Ren\'Py Live Translator" with prompt "Choisissez la langue de traduction pour ce jeu :" default items {"Français (fr)"} OK button name "Valider" cancel button name "Garder actuelle"\n'
+                        'if chosen is false then\n'
+                        '    return "CURRENT"\n'
+                        'else\n'
+                        '    return item 1 of chosen\n'
+                        'end if'
+                    )
+                    p = subprocess.Popen(['osascript', '-e', script], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    out, _ = p.communicate()
+                    out_str = out.decode('utf-8', 'ignore') if not isinstance(out, str) else out
+                    return self._parse_lang_choice(out_str)
+                except Exception:
+                    pass
+
+            elif sys.platform.startswith("win"):
+                try:
+                    ps_cmd = (
+                        "[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms');"
+                        "$f=New-Object Windows.Forms.Form;$f.Text='🎮 Ren''Py Live Translator';$f.Size=New-Object Drawing.Size(340,180);"
+                        "$f.StartPosition='CenterScreen';$f.TopMost=$true;$f.FormBorderStyle='FixedDialog';$f.MaximizeBox=$false;"
+                        "$l=New-Object Windows.Forms.Label;$l.Location=New-Object Drawing.Point(20,15);$l.Size=New-Object Drawing.Size(290,25);"
+                        "$l.Text='Choisissez la langue cible de traduction :';"
+                        "$c=New-Object Windows.Forms.ComboBox;$c.Location=New-Object Drawing.Point(20,45);$c.Size=New-Object Drawing.Size(280,25);"
+                        "$c.DropDownStyle='DropDownList';"
+                        "[void]$c.Items.AddRange(@('Français (fr)','English (en)','Español (es)','Deutsch (de)','Italiano (it)','Português (pt)','Русский (ru)','日本語 (ja)','中文 (zh)'));"
+                        "$c.SelectedIndex=0;"
+                        "$b=New-Object Windows.Forms.Button;$b.Location=New-Object Drawing.Point(100,85);$b.Size=New-Object Drawing.Size(120,32);"
+                        "$b.Text='Valider';$b.DialogResult=[Windows.Forms.DialogResult]::OK;"
+                        "$f.Controls.Add($l);$f.Controls.Add($c);$f.Controls.Add($b);$f.AcceptButton=$b;"
+                        "if($f.ShowDialog() -eq [Windows.Forms.DialogResult]::OK){Write-Output $c.SelectedItem}else{Write-Output 'CURRENT'}"
+                    )
+                    p = subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    out, _ = p.communicate()
+                    out_str = out.decode('utf-8', 'ignore') if not isinstance(out, str) else out
+                    return self._parse_lang_choice(out_str)
+                except Exception:
+                    pass
+
+            else:
+                try:
+                    p = subprocess.Popen([
+                        'zenity', '--list',
+                        '--title=Ren\'Py Live Translator',
+                        '--text=Choisissez la langue cible de traduction :',
+                        '--column=Code', '--column=Langue',
+                        'fr', 'Français',
+                        'en', 'English',
+                        'es', 'Español',
+                        'de', 'Deutsch',
+                        'it', 'Italiano',
+                        'pt', 'Português',
+                        'ru', 'Русский',
+                        'ja', '日本語',
+                        'zh', '中文'
+                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    out, _ = p.communicate()
+                    out_str = out.decode('utf-8', 'ignore') if not isinstance(out, str) else out
+                    choice = out_str.strip().lower()
+                    if choice in ('fr', 'en', 'es', 'de', 'it', 'pt', 'ru', 'ja', 'zh'):
+                        return choice
+                except Exception:
+                    pass
+
+            return None
+
+        def _parse_lang_choice(self, text):
+            """Extract standard 2-letter language code from string."""
+            if not text:
+                return None
+            m = re.search(r'\(([a-z]{2})\)', text.lower())
+            if m:
+                return m.group(1)
+            t = text.lower()
+            if 'fr' in t or 'fran' in t: return 'fr'
+            if 'es' in t or 'span' in t or 'esp' in t: return 'es'
+            if 'de' in t or 'deut' in t or 'ger' in t: return 'de'
+            if 'it' in t or 'ital' in t: return 'it'
+            if 'pt' in t or 'port' in t: return 'pt'
+            if 'ru' in t or 'russ' in t: return 'ru'
+            if 'ja' in t or 'jap' in t: return 'ja'
+            if 'zh' in t or 'chin' in t: return 'zh'
+            if 'en' in t or 'angl' in t: return 'en'
+            return None
+
+        def _set_server_language(self, lang_code):
+            """Sends selected target language to the Live Translator server."""
+            if not lang_code:
+                return
+            self.target_lang = lang_code
+            try:
+                payload = json.dumps({"target_lang": lang_code})
+                if not _is_py2 and isinstance(payload, str):
+                    payload = payload.encode('utf-8')
+                req = _url_req.Request(
+                    self.SERVER_CONFIG_URL,
+                    data=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                self.opener.open(req, timeout=1.5)
+            except Exception:
+                pass
+
         def _resolve_server_script(self):
             """Finds the absolute path to server.py."""
             candidates = []
 
-            # 1. User-configured SERVER_PATH
             if SERVER_PATH and isinstance(SERVER_PATH, _str_types) and SERVER_PATH.strip():
                 exp = os.path.expanduser(SERVER_PATH.strip())
                 if os.path.isfile(exp):
@@ -192,7 +364,6 @@ init -999 python:
                     candidates.append(os.path.join(exp, "server.py"))
                     candidates.append(os.path.join(exp, "server", "server.py"))
 
-            # 2. Check cached path in user home directory (~/.renpy_translator_path)
             try:
                 hist_path = os.path.expanduser("~/.renpy_translator_path")
                 if os.path.isfile(hist_path):
@@ -206,7 +377,6 @@ init -999 python:
             except Exception:
                 pass
 
-            # 3. Relative search from game directory
             gdir = self.game_dir
             candidates.append(os.path.join(gdir, "server", "server.py"))
             candidates.append(os.path.join(gdir, "live_translator", "server", "server.py"))
@@ -223,12 +393,10 @@ init -999 python:
 
         def _find_python3(self):
             """Finds a working Python 3 command."""
-            # If current interpreter is Python 3, check if it can be used
             if sys.version_info[0] >= 3 and sys.executable:
                 return [sys.executable]
 
             test_code = "import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)"
-            
             if sys.platform.startswith("win"):
                 commands_to_try = [["python"], ["py", "-3"], ["python3"]]
             else:
@@ -269,7 +437,6 @@ init -999 python:
                 }
 
                 if sys.platform.startswith("win"):
-                    # CREATE_NO_WINDOW (0x08000000) | DETACHED_PROCESS (0x00000200)
                     kwargs["creationflags"] = 0x08000000 | 0x00000200
                 else:
                     if hasattr(os, "setpgrp"):
@@ -280,7 +447,6 @@ init -999 python:
                 self.server_process = subprocess.Popen(cmd, **kwargs)
                 self.spawned_server = True
 
-                # Wait up to 2 seconds for server readiness
                 for _ in range(10):
                     time.sleep(0.2)
                     if self._is_server_running(timeout=0.3):
@@ -290,24 +456,27 @@ init -999 python:
             return False
 
         def _ensure_server(self):
-            """Handles two-way server lifecycle: already running vs auto-starting."""
-            if self._is_server_running():
-                # Server is already running manually or from another session.
-                # Keep it running and do not shut it down on exit.
-                self.spawned_server = False
-                return
+            """Handles server lifecycle and language selection prompt."""
+            server_was_running = self._is_server_running()
 
-            if AUTO_START_MODE == "disabled":
-                return
+            if not server_was_running:
+                if AUTO_START_MODE == "disabled":
+                    return
 
-            should_start = False
-            if AUTO_START_MODE == "always":
-                should_start = True
-            elif AUTO_START_MODE == "ask":
-                should_start = self._ask_user_dialog()
+                should_start = False
+                if AUTO_START_MODE == "always":
+                    should_start = True
+                elif AUTO_START_MODE == "ask":
+                    should_start = self._ask_user_dialog()
 
-            if should_start:
-                self._start_server()
+                if should_start:
+                    self._start_server()
+
+            if PROMPT_LANGUAGE_ON_START in ("always", "ask"):
+                chosen_lang = self._prompt_target_language()
+                if chosen_lang and chosen_lang != "CURRENT":
+                    self.target_lang = chosen_lang
+                    self._set_server_language(chosen_lang)
 
         def _cleanup(self):
             """Stops the server on game exit only if this game instance started it."""
@@ -359,7 +528,8 @@ init -999 python:
                             for old_str, new_str in matches:
                                 orig = self._unescape_renpy_str(old_str)
                                 trans = self._unescape_renpy_str(new_str)
-                                self.memory_cache[orig] = trans
+                                if orig != trans:
+                                    self.memory_cache[orig] = trans
                                 self.persisted_strings.add(orig)
             except Exception:
                 pass
@@ -389,34 +559,109 @@ init -999 python:
                     f.write(u'    new "{}"\n\n'.format(esc_new))
 
                 self.persisted_strings.add(source_text)
+
+                # Immediately register in Ren'Py active in-memory translator
+                try:
+                    active_lang = getattr(renpy.game.preferences, 'language', None) or lang_folder
+                    stl = renpy.game.script.translator.strings.get(active_lang)
+                    if stl and hasattr(stl, 'translations'):
+                        stl.translations[source_text] = translated_text
+                except Exception:
+                    pass
             except Exception:
                 pass
 
-        def _should_skip(self, text):
-            """Avoid sending empty strings, pure numbers, or punctuation."""
-            if not text or not text.strip():
+        SKIP_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.ogg', '.mp3', '.wav', '.opus', '.rpy', '.rpyc', '.ttf', '.otf', '.woff', '.json', '.xml', '.csv')
+        SKIP_PREFIXES = ('gui/', 'images/', 'audio/', 'music/', 'sound/', 'voice/', 'fonts/', 'tl/', 'cache/', '#', '@', 'http://', 'https://')
+        SKIP_UI_WORDS = (
+            'start', 'start game', 'load', 'load game', 'save', 'save game',
+            'preferences', 'options', 'settings', 'about', 'help', 'quit',
+            'exit', 'return', 'main menu', 'back', 'skip', 'auto', 'history',
+            'quick save', 'quick load', 'q.save', 'q.load', 'dialogue', 'fullscreen',
+            'window', 'music', 'sound', 'voice', 'display', 'rollback', 'empty slot'
+        )
+
+        def is_translatable_ui_string(self, text):
+            """Strict filter to safely identify human-readable texts without touching code or assets."""
+            if not text or not isinstance(text, _str_types):
+                return False
+
+            s = text.strip()
+            if len(s) < 2:
+                return False
+
+            s_lower = s.lower()
+            if s_lower in self.SKIP_UI_WORDS:
+                return False
+
+            if s.startswith('#') and len(s) in (4, 5, 7, 9):
+                return False
+
+            for ext in self.SKIP_EXTENSIONS:
+                if s_lower.endswith(ext):
+                    return False
+            for pfx in self.SKIP_PREFIXES:
+                if s_lower.startswith(pfx):
+                    return False
+
+            if re.match(r'^[vV]?\d+(\.\d+)+[a-zA-Z0-9._-]*$', s):
+                return False
+
+            if not re.search(r'[a-zA-Z\u00C0-\u00FF\u0400-\u04FF\u3040-\u30FF\u4E00-\u9FFF]', s):
+                return False
+            if re.match(r'^[\d\s.,:;+-\/%=#$€£¥°*()\[\]{}]+$', s):
+                return False
+
+            if ' ' not in s:
+                if s.startswith('_') or '__' in s or (re.match(r'^[a-zA-Z0-9_]+$', s) and '_' in s):
+                    return False
+
+            return True
+
+        def is_dialogue_text(self, text):
+            """Identifies human-readable story dialogue lines while ignoring short UI buttons."""
+            if not text or not isinstance(text, _str_types):
+                return False
+            s = text.strip()
+            if len(s) < 3:
+                return False
+            s_lower = s.lower()
+            if s_lower in self.SKIP_UI_WORDS:
+                return False
+            if s.startswith('#') or s.startswith('@') or s.startswith('gui/') or s.startswith('images/'):
+                return False
+            for ext in self.SKIP_EXTENSIONS:
+                if s_lower.endswith(ext):
+                    return False
+            words = s.split()
+            if len(words) >= 3:
                 return True
-            stripped = text.strip()
-            if not re.search(r'[a-zA-Z\u00C0-\u00FF\u0400-\u04FF\u3040-\u30FF\u4E00-\u9FFF]', stripped):
+            if len(words) >= 1 and any(p in s for p in ('!', '?', '...', '—', '“', '”', '"')):
                 return True
             return False
 
-        def translate(self, text):
-            """Intercept dialogue/choice text, return translation, and persist to game/tl/."""
-            if not self.enabled or self._should_skip(text):
-                return text
+        def _should_skip(self, text):
+            """Avoid sending empty strings, pure numbers, or punctuation."""
+            if not text:
+                return True
+            try:
+                s = text.strip() if isinstance(text, _str_types) else str(text).strip()
+            except Exception:
+                return True
+            if not s:
+                return True
+            if re.match(r'^[\d\s.,:;!?+\-\/%=#$€£¥°*()\[\]{}"\'`~^|<>&]+$', s):
+                return True
+            return False
 
-            # 1. In-memory cache check (Instant: 0 ms)
-            if text in self.memory_cache:
-                return self.memory_cache[text]
-
-            # 2. Query local Live Translator HTTP server
+        def _query_server(self, text):
+            """Queries the local Live Translator HTTP server with reliable urllib."""
             try:
                 payload = json.dumps({
                     "text": text,
-                    "game_id": self.game_id
+                    "game_id": self.game_id,
+                    "target_lang": self.target_lang
                 })
-
                 if not _is_py2 and isinstance(payload, str):
                     payload = payload.encode('utf-8')
 
@@ -427,18 +672,36 @@ init -999 python:
                 )
 
                 response = self.opener.open(req, timeout=self.TIMEOUT)
-                data = json.loads(response.read().decode('utf-8'))
-
-                translated = data.get("translated", text)
-                lang_name = data.get("lang_name", "french")
-
-                if translated:
-                    self.memory_cache[text] = translated
-                    self._persist_translation(lang_name, text, translated)
-                    return translated
-
+                raw = response.read()
+                if not _is_py2 and isinstance(raw, bytes):
+                    raw = raw.decode('utf-8', 'ignore')
+                return json.loads(raw)
             except Exception:
-                # Never crash the game on connection or timeout error
+                return None
+
+        def translate(self, text):
+            """Intercept dialogue/choice/screen text, return translation (0ms if cached), and persist to game/tl/."""
+            if not self.enabled or self._should_skip(text):
+                return text
+
+            text_str = unicode(text) if _is_py2 and not isinstance(text, unicode) else str(text)
+
+            # 1. In-memory cache check (Instant: 0 ms)
+            if text_str in self.memory_cache:
+                return self.memory_cache[text_str]
+
+            # 2. Query local server
+            try:
+                data = self._query_server(text_str)
+                if data and isinstance(data, dict):
+                    translated = data.get("translated")
+                    lang_name = data.get("lang_name", "french")
+
+                    if translated and translated.strip():
+                        self.memory_cache[text_str] = translated
+                        self._persist_translation(lang_name, text_str, translated)
+                        return translated
+            except Exception:
                 pass
 
             return text
@@ -447,9 +710,59 @@ init -999 python:
     _live_translator_instance = LiveTranslator()
 
     def _say_menu_filter_hook(text):
-        """Official Ren'Py hook for dialogue lines and choice menus."""
+        """Official Ren'Py hook for all dialogue lines and choice menus."""
         return _live_translator_instance.translate(text)
 
-    # Register dialogue filter in Ren'Py configuration
+    # 1. Register dialogue and choice menu filter
     config.say_menu_text_filter = _say_menu_filter_hook
+
+
+init 999 python:
+    ## --------------------------------------------------------------------------
+    ## LATE HOOK REINFORCEMENT & NATIVE LANGUAGE ACTIVATION
+    ## --------------------------------------------------------------------------
+    # 1. Activate target language natively in Ren'Py
+    try:
+        target_folder = _live_translator_instance.lang_folder or "french"
+        config.default_language = target_folder
+        if getattr(renpy.game.preferences, 'language', None) != target_folder:
+            renpy.change_language(target_folder)
+    except Exception:
+        pass
+
+    # 2. Ensures dialogue & choice filter remains active
+    if getattr(config, 'say_menu_text_filter', None) != _say_menu_filter_hook:
+        _prev_filter = getattr(config, 'say_menu_text_filter', None)
+        def _chained_filter(text):
+            if _prev_filter and callable(_prev_filter):
+                try:
+                    text = _prev_filter(text)
+                except Exception:
+                    pass
+            return _live_translator_instance.translate(text)
+        config.say_menu_text_filter = _chained_filter
+
+    # 3. Universal Ren'Py translate_string hook (with zero-lag dialogue protection)
+    try:
+        import renpy.translation as _rpy_trans
+        if hasattr(_rpy_trans, 'translate_string'):
+            if not getattr(_rpy_trans.translate_string, '_live_trans_hooked', False):
+                _orig_trans_string = _rpy_trans.translate_string
+                def _live_translate_string(s, *args, **kwargs):
+                    try:
+                        res = _orig_trans_string(s, *args, **kwargs)
+                        if res != s:
+                            return res
+                        if isinstance(s, _str_types) and _live_translator_instance.is_dialogue_text(s):
+                            return _live_translator_instance.translate(s)
+                    except Exception:
+                        pass
+                    return _orig_trans_string(s, *args, **kwargs)
+                _live_translate_string._live_trans_hooked = True
+                _rpy_trans.translate_string = _live_translate_string
+    except Exception:
+        pass
+
+
+
 

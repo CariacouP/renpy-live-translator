@@ -141,19 +141,30 @@ renpy-live-translator/
 ├── server/
 │   ├── server.py               # Lightweight HTTP API server (zero external dependencies)
 │   ├── storage.py              # SQLite storage & standalone export management
-│   ├── engines.py              # Google Translate & Ollama translation engines
+│   ├── engines.py              # Google, DeepL, Groq, Gemini, Mistral, LibreTranslate & Ollama
 │   └── web/
 │       └── index.html          # Interactive real-time web dashboard
-└── tests/
-    ├── __init__.py             # Test package marker
-    └── test_live_translator.py # Automated test suite (11 unit tests)
+├── tests/
+│   ├── __init__.py             # Test package marker
+│   └── test_live_translator.py # Automated test suite (33 unit & non-regression tests)
+├── AGENTS.md                   # Permanent AI & developer architecture guidelines
+├── config.example.ini          # Example configuration template for public repositories
+├── config.ini                  # Local configuration (created on launch)
+├── start.command               # macOS 1-click launcher
+├── start.sh                    # Linux / macOS shell launcher
+└── start.bat                   # Windows 1-click launcher
 ```
 
 ---
 
-## 🧪 Testing
+## 🧪 Testing & Non-Regression
 
-The test suite relies entirely on Python's standard `unittest` library (no external test dependencies required):
+The test suite relies entirely on Python's standard `unittest` library (zero external test dependencies required) and verifies 33 unit and non-regression tests covering:
+* Native Ren'Py target language activation (`config.default_language` & `renpy.change_language`)
+* Infallible path resolution (`_get_game_dir`) across macOS `.app` bundles, Linux, and Windows
+* Immediate live in-memory string injection (`StringTranslator.translations`)
+* Zero-lag UI menu protection with `is_dialogue_text` filtering
+* Anti-hook cascade protection and safe network timeouts
 
 ```bash
 python3 -m unittest discover -s tests

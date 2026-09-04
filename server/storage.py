@@ -37,9 +37,30 @@ class TranslationStorage:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS games (
+                    game_id TEXT PRIMARY KEY,
+                    game_dir TEXT,
+                    last_seen TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_translations_lookup 
                 ON translations(game_id, target_lang, source_text)
             """)
+            conn.commit()
+
+    def register_game(self, game_id, game_dir=""):
+        """Enregistre un jeu dès sa détection ou son lancement."""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO games (game_id, game_dir, last_seen)
+                VALUES (?, ?, ?)
+                ON CONFLICT(game_id) DO UPDATE SET game_dir = excluded.game_dir, last_seen = excluded.last_seen
+                """,
+                (game_id, game_dir or "", now_str)
+            )
             conn.commit()
 
     def get_translation(self, game_id, source_text, target_lang):
@@ -60,6 +81,7 @@ class TranslationStorage:
     def save_translation(self, game_id, source_text, translated_text, target_lang):
         """Enregistre ou met à jour une traduction."""
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        self.register_game(game_id)
         with self._connection() as conn:
             conn.execute(
                 """
@@ -83,10 +105,12 @@ class TranslationStorage:
             else:
                 total = conn.execute("SELECT COUNT(*) as count FROM translations").fetchone()["count"]
 
-            games = conn.execute("SELECT COUNT(DISTINCT game_id) as count FROM translations").fetchone()["count"]
+            games_count = conn.execute(
+                "SELECT COUNT(DISTINCT game_id) as count FROM (SELECT game_id FROM translations UNION SELECT game_id FROM games)"
+            ).fetchone()["count"]
             return {
                 "total_translations": total,
-                "total_games": games
+                "total_games": games_count
             }
 
     def get_history(self, limit=50):
@@ -106,9 +130,17 @@ class TranslationStorage:
     def get_games(self):
         """Retourne la liste des jeux répertoriés."""
         with self._connection() as conn:
-            rows = conn.execute(
-                "SELECT DISTINCT game_id, COUNT(*) as count FROM translations GROUP BY game_id"
-            ).fetchall()
+            rows = conn.execute("""
+                SELECT g.game_id, COUNT(t.id) as count, MAX(g.last_seen) as last_seen
+                FROM (
+                    SELECT game_id, last_seen FROM games
+                    UNION
+                    SELECT DISTINCT game_id, created_at as last_seen FROM translations
+                ) g
+                LEFT JOIN translations t ON g.game_id = t.game_id
+                GROUP BY g.game_id
+                ORDER BY count DESC, last_seen DESC
+            """).fetchall()
             return [{"game_id": row["game_id"], "count": row["count"]} for row in rows]
 
     def export_translations(self, game_id, target_lang, export_format="json"):

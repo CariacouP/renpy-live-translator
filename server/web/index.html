@@ -434,7 +434,7 @@
 
       <div style="margin-top: 24px;">
         <h3 style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);" data-i18n="lbl_detected_games">Detected Games:</h3>
-        <div id="games-list" style="font-size: 0.85rem; color: #cbd5e1;" data-i18n="no_games">No games detected yet.</div>
+        <div id="games-list" style="font-size: 0.85rem; color: #cbd5e1;">Aucun jeu détecté pour l'instant.</div>
       </div>
     </div>
   </div>
@@ -1079,19 +1079,24 @@
         }
       }
 
-      document.getElementById('engine-select').value = data.engine || 'google';
-      document.getElementById('lang-select').value = data.target_lang || 'fr';
+      if (document.activeElement !== document.getElementById('engine-select')) {
+        document.getElementById('engine-select').value = data.engine || 'google';
+      }
+      if (document.activeElement !== document.getElementById('lang-select')) {
+        document.getElementById('lang-select').value = data.target_lang || 'fr';
+      }
       
-      // Populate Engine Specific Inputs
-      if (data.deepl_api_key !== undefined) document.getElementById('deepl-key-input').value = data.deepl_api_key;
-      if (data.groq_api_key !== undefined) document.getElementById('groq-key-input').value = data.groq_api_key;
-      if (data.groq_model !== undefined) document.getElementById('groq-model-select').value = data.groq_model;
-      if (data.gemini_api_key !== undefined) document.getElementById('gemini-key-input').value = data.gemini_api_key;
-      if (data.gemini_model !== undefined) document.getElementById('gemini-model-select').value = data.gemini_model;
-      if (data.mistral_api_key !== undefined) document.getElementById('mistral-key-input').value = data.mistral_api_key;
-      if (data.mistral_model !== undefined) document.getElementById('mistral-model-select').value = data.mistral_model;
-      if (data.libretranslate_url !== undefined) document.getElementById('libre-url-input').value = data.libretranslate_url;
-      if (data.libretranslate_api_key !== undefined) document.getElementById('libre-key-input').value = data.libretranslate_api_key;
+      // Populate Engine Specific Inputs (only if not currently focused)
+      const isFocused = (id) => document.activeElement === document.getElementById(id);
+      if (data.deepl_api_key !== undefined && !isFocused('deepl-key-input')) document.getElementById('deepl-key-input').value = data.deepl_api_key;
+      if (data.groq_api_key !== undefined && !isFocused('groq-key-input')) document.getElementById('groq-key-input').value = data.groq_api_key;
+      if (data.groq_model !== undefined && !isFocused('groq-model-select')) document.getElementById('groq-model-select').value = data.groq_model;
+      if (data.gemini_api_key !== undefined && !isFocused('gemini-key-input')) document.getElementById('gemini-key-input').value = data.gemini_api_key;
+      if (data.gemini_model !== undefined && !isFocused('gemini-model-select')) document.getElementById('gemini-model-select').value = data.gemini_model;
+      if (data.mistral_api_key !== undefined && !isFocused('mistral-key-input')) document.getElementById('mistral-key-input').value = data.mistral_api_key;
+      if (data.mistral_model !== undefined && !isFocused('mistral-model-select')) document.getElementById('mistral-model-select').value = data.mistral_model;
+      if (data.libretranslate_url !== undefined && !isFocused('libre-url-input')) document.getElementById('libre-url-input').value = data.libretranslate_url;
+      if (data.libretranslate_api_key !== undefined && !isFocused('libre-key-input')) document.getElementById('libre-key-input').value = data.libretranslate_api_key;
 
       // Update Engine Badge in Stats
       const engineLabels = {
@@ -1109,7 +1114,7 @@
       updateSubpanels();
 
       // Automatically translate UI according to target_lang
-      applyLanguage(data.target_lang);
+      applyLanguage(data.target_lang || 'fr');
 
       // Ollama models list
       const modelSelect = document.getElementById('model-select');
@@ -1136,7 +1141,7 @@
 
       const gamesList = document.getElementById('games-list');
       if (data.games && data.games.length > 0) {
-        gamesList.innerHTML = data.games.map(g => `<span class="game-badge" style="margin-right: 8px;">${g.game_id} (${g.count})</span>`).join('');
+        gamesList.innerHTML = data.games.map(g => `<span class="game-badge" style="display: inline-flex; align-items: center; gap: 6px; margin: 4px 8px 4px 0; padding: 4px 10px; background: rgba(124, 77, 255, 0.2); border: 1px solid rgba(124, 77, 255, 0.4); border-radius: 6px; font-weight: 600; color: #c4b5fd;">🎮 ${g.game_id} <span style="background: rgba(0,0,0,0.3); padding: 1px 6px; border-radius: 4px; font-size: 0.75rem; color: #94a3b8;">${g.count} lignes</span></span>`).join('');
       } else {
         const dict = I18N[activeLang] || I18N['en'];
         gamesList.innerText = dict.no_games;
@@ -1289,11 +1294,22 @@
   loadStatus();
   loadStats();
   loadHistory();
+
+  window.addEventListener('focus', () => {
+    if (!isShuttingDown) {
+      loadStatus();
+      loadStats();
+      loadHistory();
+    }
+  });
+
   refreshTimer = setInterval(() => {
     if (!isShuttingDown) {
+      loadStatus();
       loadStats();
       loadHistory();
     }
   }, 2000);
+</script>
 </body>
 </html>

@@ -6,6 +6,24 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import time
+import ssl
+
+def get_ssl_context():
+    """Creates a resilient SSL context that avoids macOS / Windows Python certificate failures."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        ctx = ssl.create_default_context()
+        return ctx
+    except Exception:
+        pass
+    try:
+        return ssl._create_unverified_context()
+    except Exception:
+        return None
 
 def protect_tags(text):
     """
@@ -102,13 +120,25 @@ class GoogleEngine:
             url,
             headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
         )
-        with urllib.request.urlopen(req, timeout=3.5) as response:
-            data = json.loads(response.read().decode('utf-8'))
+        ctx = get_ssl_context()
+        kwargs = {"timeout": 3.5}
+        if ctx:
+            kwargs["context"] = ctx
+
+        with urllib.request.urlopen(req, **kwargs) as response:
+            raw = response.read().decode('utf-8')
+            try:
+                data = json.loads(raw)
+            except Exception:
+                return raw.strip('"')
+
+            if isinstance(data, str):
+                return data
             if isinstance(data, list):
                 if len(data) > 0 and isinstance(data[0], list):
                     return "".join([part[0] for part in data if isinstance(part, list) and len(part) > 0])
                 elif len(data) > 0 and isinstance(data[0], str):
-                    return data[0]
+                    return "".join(data)
         return ""
 
     def _translate_gtx(self, text, target_lang):
@@ -124,7 +154,12 @@ class GoogleEngine:
             url,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         )
-        with urllib.request.urlopen(req, timeout=3.0) as response:
+        ctx = get_ssl_context()
+        kwargs = {"timeout": 3.5}
+        if ctx:
+            kwargs["context"] = ctx
+
+        with urllib.request.urlopen(req, **kwargs) as response:
             result = json.loads(response.read().decode('utf-8'))
             translated_parts = []
             if result and isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
@@ -144,7 +179,12 @@ class GoogleEngine:
             url,
             headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"}
         )
-        with urllib.request.urlopen(req, timeout=3.5) as response:
+        ctx = get_ssl_context()
+        kwargs = {"timeout": 4.0}
+        if ctx:
+            kwargs["context"] = ctx
+
+        with urllib.request.urlopen(req, **kwargs) as response:
             html_content = response.read().decode('utf-8', errors='ignore')
             match = re.search(r'class="result-container">([^<]+)<', html_content)
             if match:
@@ -225,8 +265,13 @@ class DeepLEngine:
             }
         )
 
+        ctx = get_ssl_context()
+        kwargs = {"timeout": 5.0}
+        if ctx:
+            kwargs["context"] = ctx
+
         try:
-            with urllib.request.urlopen(req, timeout=5.0) as response:
+            with urllib.request.urlopen(req, **kwargs) as response:
                 result = json.loads(response.read().decode('utf-8'))
                 translations = result.get("translations", [])
                 if translations:
@@ -276,8 +321,13 @@ class GroqEngine:
             }
         )
 
+        ctx = get_ssl_context()
+        kwargs = {"timeout": 6.0}
+        if ctx:
+            kwargs["context"] = ctx
+
         try:
-            with urllib.request.urlopen(req, timeout=6.0) as response:
+            with urllib.request.urlopen(req, **kwargs) as response:
                 result = json.loads(response.read().decode('utf-8'))
                 choices = result.get("choices", [])
                 if choices:
@@ -328,8 +378,13 @@ class GeminiEngine:
             headers={"Content-Type": "application/json"}
         )
 
+        ctx = get_ssl_context()
+        kwargs = {"timeout": 8.0}
+        if ctx:
+            kwargs["context"] = ctx
+
         try:
-            with urllib.request.urlopen(req, timeout=8.0) as response:
+            with urllib.request.urlopen(req, **kwargs) as response:
                 result = json.loads(response.read().decode('utf-8'))
                 candidates = result.get("candidates", [])
                 if candidates:
@@ -381,8 +436,13 @@ class MistralEngine:
             }
         )
 
+        ctx = get_ssl_context()
+        kwargs = {"timeout": 6.0}
+        if ctx:
+            kwargs["context"] = ctx
+
         try:
-            with urllib.request.urlopen(req, timeout=6.0) as response:
+            with urllib.request.urlopen(req, **kwargs) as response:
                 result = json.loads(response.read().decode('utf-8'))
                 choices = result.get("choices", [])
                 if choices:
@@ -425,8 +485,13 @@ class LibreTranslateEngine:
             headers={"Content-Type": "application/json"}
         )
 
+        ctx = get_ssl_context()
+        kwargs = {"timeout": 6.0}
+        if ctx:
+            kwargs["context"] = ctx
+
         try:
-            with urllib.request.urlopen(req, timeout=6.0) as response:
+            with urllib.request.urlopen(req, **kwargs) as response:
                 result = json.loads(response.read().decode('utf-8'))
                 translated = result.get("translatedText", "")
                 if translated:

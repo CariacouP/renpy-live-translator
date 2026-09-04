@@ -241,6 +241,9 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
         if path == "/api/translate":
             text = data.get("text", "")
             game_id = data.get("game_id", "RenpyGame")
+            req_lang = data.get("target_lang")
+            if req_lang and req_lang in LANG_NAMES:
+                state.target_lang = req_lang
 
             if not text:
                 self._send_json({"translated": "", "cached": False})
@@ -251,6 +254,7 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
             # 1. Vérifier le cache SQLite
             cached = state.storage.get_translation(game_id, text, state.target_lang)
             if cached:
+                print(f"⚡ [Cache Hit] ({game_id}) \"{text[:35]}\" -> \"{cached[:35]}\" [{state.target_lang}]")
                 self._send_json({
                     "translated": cached,
                     "cached": True,
@@ -262,6 +266,7 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
             # 2. Traduction via le moteur actif
             engine = state.get_engine()
             translated = engine.translate(text, state.target_lang)
+            print(f"🌐 [Translate] ({game_id} via {state.engine_name}) \"{text[:35]}\" -> \"{translated[:35]}\" [{state.target_lang}]")
 
             # 3. Sauvegarder dans le cache SQLite (si pas un message d'erreur interne)
             if translated and not translated.startswith("[") and translated != text:
@@ -273,6 +278,17 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
                 "target_lang": state.target_lang,
                 "lang_name": lang_folder
             })
+            return
+
+        elif path == "/api/register_game":
+            game_id = data.get("game_id", "RenpyGame")
+            game_dir = data.get("game_dir", "")
+            req_lang = data.get("target_lang")
+            if req_lang and req_lang in LANG_NAMES:
+                state.target_lang = req_lang
+            state.storage.register_game(game_id, game_dir)
+            print(f"🎮 [Game Connected] \"{game_id}\" (target_lang: {state.target_lang})")
+            self._send_json({"status": "registered", "game_id": game_id, "target_lang": state.target_lang})
             return
 
         elif path == "/api/config":
