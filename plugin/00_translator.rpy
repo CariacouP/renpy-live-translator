@@ -534,17 +534,26 @@ init -999 python:
                         pass
 
         def _escape_renpy_str(self, text):
-            """Escape quotes and newlines for .rpy format."""
+            """Escape quotes and newlines for .rpy format safely in Python 2 and Python 3."""
             if not text:
-                return ""
+                return u""
+            if _is_py2 and isinstance(text, str):
+                text = text.decode('utf-8', 'ignore')
+            elif not isinstance(text, _str_types):
+                text = unicode(text) if _is_py2 else str(text)
+
             res = re.sub(r'\\(?![n"\'\\])', r'\\\\', text)
-            res = res.replace('\\"', '"').replace('"', '\\"')
-            res = res.replace('\r\n', '\\n').replace('\n', '\\n')
+            res = res.replace(u'\\"', u'"').replace(u'"', u'\\"')
+            res = res.replace(u'\r\n', u'\\n').replace(u'\n', u'\\n')
             return res
 
         def _unescape_renpy_str(self, text):
             """Unescape quotes and escaped newlines."""
-            return text.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\')
+            if not text:
+                return u""
+            if _is_py2 and isinstance(text, str):
+                text = text.decode('utf-8', 'ignore')
+            return text.replace(u'\\"', u'"').replace(u'\\n', u'\n').replace(u'\\\\', u'\\')
 
         def _load_local_translations(self):
             """Read existing game/tl/*/live_translations.rpy files to prefill the memory cache."""
@@ -602,12 +611,15 @@ init -999 python:
 
                 # Immediately register in Ren'Py active in-memory translator
                 try:
+                    import renpy
                     active_lang = getattr(renpy.game.preferences, 'language', None) or lang_folder
                     stl = renpy.game.script.translator.strings.get(active_lang)
                     if stl and hasattr(stl, 'translations'):
                         stl.translations[source_text] = translated_text
                 except Exception:
                     pass
+            except Exception:
+                pass
             except Exception:
                 pass
 
@@ -763,20 +775,25 @@ init -999 python:
                 return self.memory_cache[text_str]
 
             # 2. Query local server
+            translated = None
+            lang_name = "french"
             try:
                 data = self._query_server(text_str)
                 if data and isinstance(data, dict):
                     translated = data.get("translated")
                     lang_name = data.get("lang_name", "french")
-
-                    if translated and translated.strip():
-                        # Store both source -> translated and translated -> translated to prevent double-translation of choices
-                        self.memory_cache[text_str] = translated
-                        self.memory_cache[translated] = translated
-                        self._persist_translation(lang_name, text_str, translated)
-                        return translated
             except Exception:
                 pass
+
+            if translated and translated.strip():
+                # Store both source -> translated and translated -> translated to prevent double-translation of choices
+                self.memory_cache[text_str] = translated
+                self.memory_cache[translated] = translated
+                try:
+                    self._persist_translation(lang_name, text_str, translated)
+                except Exception:
+                    pass
+                return translated
 
             # 3. Negative cache: remember original text for session to prevent freeze loops on every UI frame
             self.memory_cache[text_str] = text_str

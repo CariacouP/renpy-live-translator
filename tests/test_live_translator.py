@@ -821,6 +821,84 @@ class TestRegression(unittest.TestCase):
         self.assertIn("'preferences'", content)
         self.assertIn("'file_slots'", content)
 
+    def test_regression_translate_resilience_on_persist_error(self):
+        """Vérifie que translate() retourne toujours le texte traduit même si _persist_translation lève une exception."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        py_lines = []
+        skip_block = False
+        for line in lines:
+            if line.strip().startswith("init 999"):
+                skip_block = True
+                continue
+            if skip_block:
+                continue
+            if line.strip().startswith("init -999") or "config.say_menu_text_filter" in line or "_live_translator_instance = LiveTranslator()" in line:
+                continue
+            if line.startswith("    "):
+                py_lines.append(line[4:])
+            else:
+                py_lines.append(line)
+
+        test_scope = {"config": type("MockConfig", (), {"gamedir": "/mock/game", "name": "TestGame"})()}
+        exec("".join(py_lines), test_scope)
+
+        LiveTranslatorClass = test_scope["LiveTranslator"]
+        with patch.object(LiveTranslatorClass, '__init__', lambda self: None):
+            instance = LiveTranslatorClass()
+            instance.enabled = True
+            instance.memory_cache = {}
+            instance.persisted_strings = set()
+            instance.game_dir = "/tmp"
+            instance.game_id = "TestGame"
+            instance.target_lang = "fr"
+
+            # Mock server returning translation successfully
+            instance._query_server = MagicMock(return_value={"translated": "Texte traduit avec succès", "lang_name": "french"})
+            # Force _persist_translation to raise an IOError (e.g. read-only disk, permission error)
+            instance._persist_translation = MagicMock(side_effect=IOError("Permission denied"))
+
+            res = instance.translate("English dialogue line")
+            # Translation must STILL be returned to the player despite persistence error!
+            self.assertEqual(res, "Texte traduit avec succès")
+            self.assertEqual(instance.memory_cache["English dialogue line"], "Texte traduit avec succès")
+
+    def test_regression_escape_renpy_str_unicode(self):
+        """Vérifie que _escape_renpy_str gère sans crash les caractères accentués en Python 2 (str/bytes) et Python 3."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        py_lines = []
+        skip_block = False
+        for line in lines:
+            if line.strip().startswith("init 999"):
+                skip_block = True
+                continue
+            if skip_block:
+                continue
+            if line.strip().startswith("init -999") or "config.say_menu_text_filter" in line or "_live_translator_instance = LiveTranslator()" in line:
+                continue
+            if line.startswith("    "):
+                py_lines.append(line[4:])
+            else:
+                py_lines.append(line)
+
+        test_scope = {"config": type("MockConfig", (), {"gamedir": "/mock/game", "name": "TestGame"})()}
+        exec("".join(py_lines), test_scope)
+
+        LiveTranslatorClass = test_scope["LiveTranslator"]
+        with patch.object(LiveTranslatorClass, '__init__', lambda self: None):
+            instance = LiveTranslatorClass()
+            # Test string with quotes, newlines and french accents
+            test_str = 'Un texte avec "guillemets" et éèàç ù\nNouvelle ligne'
+            escaped = instance._escape_renpy_str(test_str)
+            self.assertIn('\\"', escaped)
+            self.assertIn('\\n', escaped)
+            self.assertIn('éèàç', escaped)
+
 
 if __name__ == "__main__":
     unittest.main()
