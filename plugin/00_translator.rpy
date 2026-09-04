@@ -135,6 +135,38 @@ init -999 python:
 
         def _get_game_dir(self):
             """Reliably determines the game/ directory across all platforms and execution environments."""
+            # 1. Ren'Py loader for this script file (100% infallible inside Ren'Py)
+            try:
+                import renpy
+                if hasattr(renpy, 'loader') and hasattr(renpy.loader, 'transfn'):
+                    p = renpy.loader.transfn("00_translator.rpy")
+                    if p and os.path.isfile(p):
+                        d = os.path.abspath(os.path.dirname(p))
+                        if os.path.isdir(d):
+                            return d
+            except Exception:
+                pass
+
+            # 2. renpy.config.gamedir
+            try:
+                import renpy
+                if hasattr(renpy, 'config') and getattr(renpy.config, 'gamedir', None):
+                    gd = renpy.config.gamedir
+                    if gd and os.path.isdir(gd):
+                        return os.path.abspath(gd)
+            except Exception:
+                pass
+
+            # 3. renpy.config.basedir / game
+            try:
+                import renpy
+                if hasattr(renpy, 'config') and getattr(renpy.config, 'basedir', None):
+                    bd_game = os.path.join(renpy.config.basedir, 'game')
+                    if os.path.isdir(bd_game):
+                        return os.path.abspath(bd_game)
+            except Exception:
+                pass
+
             candidates = []
             try:
                 candidates.append(os.path.dirname(os.path.abspath(__file__)))
@@ -156,8 +188,11 @@ init -999 python:
             for d in candidates:
                 if d and os.path.isdir(d):
                     if os.path.isdir(os.path.join(d, 'tl')) or os.path.isfile(os.path.join(d, '00_translator.rpy')):
-                        return d
-            return candidates[0] if candidates else os.getcwd()
+                        return os.path.abspath(d)
+            for d in candidates:
+                if d and os.path.isdir(d):
+                    return os.path.abspath(d)
+            return os.getcwd()
 
         def _remember_server_path(self, server_path):
             """Saves server_path globally and writes it into 00_translator.rpy if SERVER_PATH is empty."""
@@ -514,7 +549,9 @@ init -999 python:
         def _load_local_translations(self):
             """Read existing game/tl/*/live_translations.rpy files to prefill the memory cache."""
             try:
-                tl_root = os.path.join(self.game_dir, "tl")
+                game_dir = self.game_dir or self._get_game_dir()
+                self.game_dir = game_dir
+                tl_root = os.path.join(game_dir, "tl")
                 if not os.path.isdir(tl_root):
                     return
 
@@ -530,6 +567,7 @@ init -999 python:
                                 trans = self._unescape_renpy_str(new_str)
                                 if orig != trans:
                                     self.memory_cache[orig] = trans
+                                    self.memory_cache[trans] = trans
                                 self.persisted_strings.add(orig)
             except Exception:
                 pass
@@ -540,8 +578,10 @@ init -999 python:
                 return
 
             try:
-                lang_folder = lang_name or "french"
-                tl_dir = os.path.join(self.game_dir, "tl", lang_folder)
+                lang_folder = lang_name or self.lang_folder or "french"
+                game_dir = self.game_dir or self._get_game_dir()
+                self.game_dir = game_dir
+                tl_dir = os.path.join(game_dir, "tl", lang_folder)
                 if not os.path.exists(tl_dir):
                     os.makedirs(tl_dir)
 
@@ -572,13 +612,15 @@ init -999 python:
                 pass
 
         SKIP_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.ogg', '.mp3', '.wav', '.opus', '.rpy', '.rpyc', '.ttf', '.otf', '.woff', '.json', '.xml', '.csv')
-        SKIP_PREFIXES = ('gui/', 'images/', 'audio/', 'music/', 'sound/', 'voice/', 'fonts/', 'tl/', 'cache/', '#', '@', 'http://', 'https://')
+        SKIP_PREFIXES = ('gui/', 'images/', 'audio/', 'music/', 'sound/', 'voice/', 'fonts/', 'tl/', 'cache/', '#', '{#', '@', 'http://', 'https://')
         SKIP_UI_WORDS = (
             'start', 'start game', 'load', 'load game', 'save', 'save game',
             'preferences', 'options', 'settings', 'about', 'help', 'quit',
             'exit', 'return', 'main menu', 'back', 'skip', 'auto', 'history',
             'quick save', 'quick load', 'q.save', 'q.load', 'dialogue', 'fullscreen',
-            'window', 'music', 'sound', 'voice', 'display', 'rollback', 'empty slot'
+            'window', 'music', 'sound', 'voice', 'display', 'rollback', 'empty slot',
+            'auto-forward time', 'text speed', 'music volume', 'sound volume', 'voice volume',
+            'rollback side', 'unseen text', 'after choices', 'transitions'
         )
 
         def is_translatable_ui_string(self, text):
@@ -619,24 +661,54 @@ init -999 python:
             return True
 
         def is_dialogue_text(self, text):
-            """Identifies human-readable story dialogue lines while ignoring short UI buttons."""
+            """Identifies human-readable story dialogue lines while ignoring short UI buttons, save slots, and menus."""
             if not text or not isinstance(text, _str_types):
                 return False
             s = text.strip()
             if len(s) < 3:
                 return False
+
+            # Immediate exclusion of Ren'Py text tags, file/save slot timestamps, and system UI
+            if s.startswith('{#'):
+                return False
+            if '{#file_time}' in s or '{#weekday}' in s or '{#slot' in s:
+                return False
+            if '[config.' in s or '[renpy.' in s or '{a=' in s:
+                return False
+
             s_lower = s.lower()
             if s_lower in self.SKIP_UI_WORDS:
                 return False
-            if s.startswith('#') or s.startswith('@') or s.startswith('gui/') or s.startswith('images/'):
+
+            # Exclude common system dialogue confirmation questions
+            if any(confirm in s_lower for confirm in (
+                'are you sure you want to return',
+                'are you sure you want to quit',
+                'are you sure you want to overwrite',
+                'this will lose unsaved progress'
+            )):
                 return False
+
+            for pfx in self.SKIP_PREFIXES:
+                if s.startswith(pfx) or s_lower.startswith(pfx):
+                    return False
             for ext in self.SKIP_EXTENSIONS:
                 if s_lower.endswith(ext):
                     return False
-            words = s.split()
+
+            # Strip Ren'Py style/formatting tags ({color...}, {size...}, etc.) before evaluating words
+            clean_s = re.sub(r'\{[^{}]*\}', '', s).strip()
+            if len(clean_s) < 2:
+                return False
+
+            clean_lower = clean_s.lower().strip('!?. \t\r\n')
+            if clean_lower in self.SKIP_UI_WORDS:
+                return False
+
+            words = clean_s.split()
             if len(words) >= 3:
                 return True
-            if len(words) >= 1 and any(p in s for p in ('!', '?', '...', '—', '“', '”', '"')):
+            if len(words) >= 1 and any(p in clean_s for p in ('!', '?', '...', '—', '“', '”', '"')):
                 return True
             return False
 
@@ -698,12 +770,16 @@ init -999 python:
                     lang_name = data.get("lang_name", "french")
 
                     if translated and translated.strip():
+                        # Store both source -> translated and translated -> translated to prevent double-translation of choices
                         self.memory_cache[text_str] = translated
+                        self.memory_cache[translated] = translated
                         self._persist_translation(lang_name, text_str, translated)
                         return translated
             except Exception:
                 pass
 
+            # 3. Negative cache: remember original text for session to prevent freeze loops on every UI frame
+            self.memory_cache[text_str] = text_str
             return text
 
     # Global translator instance
@@ -742,7 +818,7 @@ init 999 python:
             return _live_translator_instance.translate(text)
         config.say_menu_text_filter = _chained_filter
 
-    # 3. Universal Ren'Py translate_string hook (with zero-lag dialogue protection)
+    # 3. Universal Ren'Py translate_string hook (with zero-lag dialogue & menu protection)
     try:
         import renpy.translation as _rpy_trans
         if hasattr(_rpy_trans, 'translate_string'):
@@ -753,6 +829,12 @@ init 999 python:
                         res = _orig_trans_string(s, *args, **kwargs)
                         if res != s:
                             return res
+                        # Fast-path: Never query network during system menu screens or sub-contexts
+                        if hasattr(renpy, 'context_nesting_level') and renpy.context_nesting_level() > 0:
+                            return res
+                        for _sname in ('save', 'load', 'file_slots', 'preferences', 'help', 'history', 'main_menu'):
+                            if hasattr(renpy, 'get_screen') and renpy.get_screen(_sname):
+                                return res
                         if isinstance(s, _str_types) and _live_translator_instance.is_dialogue_text(s):
                             return _live_translator_instance.translate(s)
                     except Exception:
