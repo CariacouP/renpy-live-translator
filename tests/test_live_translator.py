@@ -1152,6 +1152,16 @@ class TestBatchPreload(unittest.TestCase):
         self.assertIn("Stay a while", texts)
         self.assertEqual(len(texts), 4)
 
+    def test_regression_no_duplicate_or_identity_persistence(self):
+        """Vérifie que _persist_translation ne sauvegarde jamais deux fois la même clé ni d'identités old==new."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("if not source_text or not translated_text or source_text == translated_text:", content)
+        self.assertIn("if source_text in self.persisted_strings:", content)
+        self.assertIn("if translated != text_str:", content)
+
 
 if __name__ == "__main__":
     unittest.main()

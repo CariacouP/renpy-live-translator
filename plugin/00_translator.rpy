@@ -573,23 +573,33 @@ init -999 python:
                     file_path = os.path.join(tl_root, lang, "live_translations.rpy")
                     if os.path.isfile(file_path):
                         with codecs.open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            content = f.read()
-                            pattern = r'old\s+"(.*?(?<!\\))"\s*\n\s*new\s+"(.*?(?<!\\))"'
-                            matches = re.findall(pattern, content)
-                            for old_str, new_str in matches:
-                                orig = self._unescape_renpy_str(old_str)
-                                trans = self._unescape_renpy_str(new_str)
-                                if orig != trans:
-                                    self.memory_cache[orig] = trans
-                                    self.memory_cache[trans] = trans
-                                self.persisted_strings.add(orig)
+                            lines = f.readlines()
+                            curr_old = None
+                            for line in lines:
+                                stripped = line.strip()
+                                if stripped.startswith("old "):
+                                    val = stripped[4:].strip()
+                                    if val.startswith('"') and val.endswith('"'):
+                                        curr_old = self._unescape_renpy_str(val[1:-1])
+                                elif stripped.startswith("new ") and curr_old is not None:
+                                    val = stripped[4:].strip()
+                                    if val.startswith('"') and val.endswith('"'):
+                                        curr_new = self._unescape_renpy_str(val[1:-1])
+                                        if curr_old != curr_new:
+                                            self.memory_cache[curr_old] = curr_new
+                                            self.memory_cache[curr_new] = curr_new
+                                        self.persisted_strings.add(curr_old)
+                                        curr_old = None
             except Exception:
                 pass
 
         def _persist_translation(self, lang_name, source_text, translated_text):
             """Write translation directly to game/tl/<lang_name>/live_translations.rpy."""
+            if not source_text or not translated_text or source_text == translated_text:
+                return
             if source_text in self.persisted_strings:
                 return
+            self.persisted_strings.add(source_text)
 
             try:
                 lang_folder = lang_name or self.lang_folder or "french"
@@ -675,16 +685,16 @@ init -999 python:
                     try:
                         items = getattr(node, 'items', []) or []
                         for item in items:
-                            if isinstance(item, (list, tuple)) and len(item) >= 1:
-                                choice_text = item[0]
-                                if choice_text and isinstance(choice_text, _str_types) and not self._should_skip(choice_text):
-                                    texts.add(_safe_str(choice_text))
+                            if isinstance(item, (list, tuple)):
+                                for elem in (item[0] if len(item) > 0 else None, item[2] if len(item) > 2 else None):
+                                    if elem and isinstance(elem, _str_types) and not self._should_skip(elem):
+                                        texts.add(_safe_str(elem))
                                 # Follow the choice's block
                                 if len(item) >= 3 and item[2]:
                                     sub_block = item[2]
                                     if isinstance(sub_block, list):
                                         stack.extend(sub_block)
-                                    else:
+                                    elif not isinstance(sub_block, _str_types):
                                         stack.append(sub_block)
                     except Exception:
                         pass
@@ -955,10 +965,11 @@ init -999 python:
                 # Store both source -> translated and translated -> translated to prevent double-translation of choices
                 self.memory_cache[text_str] = translated
                 self.memory_cache[translated] = translated
-                try:
-                    self._persist_translation(lang_name, text_str, translated)
-                except Exception:
-                    pass
+                if translated != text_str:
+                    try:
+                        self._persist_translation(lang_name, text_str, translated)
+                    except Exception:
+                        pass
                 return translated
 
             # 3. Negative cache: remember original text for session to prevent freeze loops on every UI frame
