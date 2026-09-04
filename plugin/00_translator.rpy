@@ -42,17 +42,21 @@ init -999 python:
 
     # Python 2 (Ren'Py <= 7) vs Python 3 (Ren'Py 8+) compatibility helpers
     if sys.version_info[0] < 3:
+        import __builtin__ as _builtins
         import urllib2 as _url_req
         import urllib2 as _url_err
         import httplib as _http_client
         _is_py2 = True
-        _str_types = (str, unicode)
+        _str_types = (_builtins.str, _builtins.unicode)
     else:
+        import builtins as _builtins
         import urllib.request as _url_req
         import urllib.error as _url_err
         import http.client as _http_client
         _is_py2 = False
-        _str_types = (str,)
+        _str_types = (_builtins.str,)
+
+    _dict_types = (_builtins.dict, dict)
 
     class LiveTranslator(object):
         SERVER_URL = "http://127.0.0.1:5005/api/translate"
@@ -748,6 +752,8 @@ init -999 python:
                 })
                 if not _is_py2 and isinstance(payload, str):
                     payload = payload.encode('utf-8')
+                elif _is_py2 and isinstance(payload, unicode):
+                    payload = payload.encode('utf-8')
 
                 req = _url_req.Request(
                     self.SERVER_URL,
@@ -779,7 +785,7 @@ init -999 python:
             lang_name = "french"
             try:
                 data = self._query_server(text_str)
-                if data and isinstance(data, dict):
+                if data and (isinstance(data, _dict_types) or hasattr(data, "get")):
                     translated = data.get("translated")
                     lang_name = data.get("lang_name", "french")
             except Exception:

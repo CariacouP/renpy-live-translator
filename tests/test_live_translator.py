@@ -899,6 +899,55 @@ class TestRegression(unittest.TestCase):
             self.assertIn('\\n', escaped)
             self.assertIn('éèàç', escaped)
 
+    def test_regression_revertable_dict_shadowing(self):
+        """Vérifie que translate() fonctionne même si 'dict' dans le store Ren'Py est RevertableDict (shadowing)."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        py_lines = []
+        skip_block = False
+        for line in lines:
+            if line.strip().startswith("init 999"):
+                skip_block = True
+                continue
+            if skip_block:
+                continue
+            if line.strip().startswith("init -999") or "config.say_menu_text_filter" in line or "_live_translator_instance = LiveTranslator()" in line:
+                continue
+            if line.startswith("    "):
+                py_lines.append(line[4:])
+            else:
+                py_lines.append(line)
+
+        class RevertableDict(dict):
+            pass
+
+        test_scope = {
+            "config": type("MockConfig", (), {"gamedir": "/mock/game", "name": "TestGame"})(),
+            "dict": RevertableDict  # Ren'Py replaces built-in dict with RevertableDict in store
+        }
+        exec("".join(py_lines), test_scope)
+
+        LiveTranslatorClass = test_scope["LiveTranslator"]
+        with patch.object(LiveTranslatorClass, '__init__', lambda self: None):
+            instance = LiveTranslatorClass()
+            instance.enabled = True
+            instance.memory_cache = {}
+            instance.persisted_strings = set()
+            instance.game_dir = "/tmp"
+            instance.game_id = "TestGame"
+            instance.target_lang = "fr"
+
+            # _query_server returns a pure standard Python dict (from json.loads)
+            instance._query_server = MagicMock(return_value={"translated": "Texte traduit anti-shadowing", "lang_name": "french"})
+            instance._persist_translation = MagicMock()
+
+            res = instance.translate("English shadow dialogue")
+            self.assertEqual(res, "Texte traduit anti-shadowing")
+            self.assertEqual(instance.memory_cache["English shadow dialogue"], "Texte traduit anti-shadowing")
+
 
 if __name__ == "__main__":
     unittest.main()
+
