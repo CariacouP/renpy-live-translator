@@ -355,6 +355,69 @@ class LiveTranslatorHandler(BaseHTTPRequestHandler):
             }})
             return
 
+        elif path == "/api/batch_translate":
+            texts = data.get("texts", [])
+            game_id = data.get("game_id", "RenpyGame")
+            req_lang = data.get("target_lang")
+            if req_lang and req_lang in LANG_NAMES:
+                state.target_lang = req_lang
+
+            if not texts:
+                self._send_json({
+                    "note": "Pre-translate works from inside the game. Launch your Ren'Py game and it will auto-scan all dialogues.",
+                    "status": "no_texts",
+                    "results": {}
+                })
+                return
+
+            lang_name = LANG_NAMES.get(state.target_lang, state.target_lang)
+            engine = state.get_engine()
+
+            # 1. Check which texts are already cached (single SQL query)
+            try:
+                existing = state.storage.batch_get_existing(game_id, state.target_lang, texts)
+                to_translate = [t for t in texts if t not in existing]
+            except Exception:
+                existing = {}
+                to_translate = list(texts)
+
+            translated_count = 0
+            errors = 0
+            results = dict(existing)  # start with cached results
+
+            # 2. Translate uncached texts
+            for text in to_translate:
+                try:
+                    translated = engine.translate(text, state.target_lang)
+                    if translated and not translated.startswith("[") and translated != text:
+                        state.storage.save_translation(game_id, text, translated, state.target_lang)
+                        results[text] = translated
+                        translated_count += 1
+                    else:
+                        results[text] = text
+                        if translated != text:
+                            errors += 1
+                except Exception:
+                    results[text] = text
+                    errors += 1
+
+                # Rate-limit between translations
+                if state.engine_name in ("google", "libretranslate"):
+                    time.sleep(0.2)
+                elif state.engine_name == "ollama":
+                    time.sleep(0.1)
+
+            self._send_json({
+                "results": results,
+                "total": len(texts),
+                "already_cached": len(existing),
+                "translated": translated_count,
+                "errors": errors,
+                "target_lang": state.target_lang,
+                "lang_name": lang_name
+            })
+            return
+
         elif path == "/api/shutdown":
             self._send_json({"status": "shutting_down", "message": "Server stopped successfully."})
             def _delayed_shutdown(srv):

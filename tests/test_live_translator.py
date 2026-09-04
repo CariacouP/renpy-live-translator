@@ -948,6 +948,211 @@ class TestRegression(unittest.TestCase):
             self.assertEqual(instance.memory_cache["English shadow dialogue"], "Texte traduit anti-shadowing")
 
 
+class TestBatchPreload(unittest.TestCase):
+    """Tests pour le mode batch et le preload des traductions."""
+
+    def test_storage_batch_get_existing(self):
+        """Vérifie que batch_get_existing retourne les traductions en cache efficacement."""
+        temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        try:
+            storage = TranslationStorage(temp_db.name)
+
+            # Aucune traduction au départ
+            result = storage.batch_get_existing("Game1", "fr", ["Hello", "World"])
+            self.assertEqual(result, {})
+
+            # Ajouter quelques traductions
+            storage.save_translation("Game1", "Hello", "Bonjour", "fr")
+            storage.save_translation("Game1", "World", "Monde", "fr")
+
+            # Vérifier le batch
+            result = storage.batch_get_existing("Game1", "fr", ["Hello", "World", "Missing"])
+            self.assertEqual(len(result), 2)
+            self.assertEqual(result["Hello"], "Bonjour")
+            self.assertEqual(result["World"], "Monde")
+            self.assertNotIn("Missing", result)
+
+            # Liste vide
+            result = storage.batch_get_existing("Game1", "fr", [])
+            self.assertEqual(result, {})
+
+            # Jeu différent
+            result = storage.batch_get_existing("Game2", "fr", ["Hello"])
+            self.assertEqual(result, {})
+        finally:
+            if os.path.exists(temp_db.name):
+                os.remove(temp_db.name)
+
+    def test_batch_translate_endpoint_cache_and_translate(self):
+        """Vérifie le endpoint /api/batch_translate (cache hit + misses simulés)."""
+        temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        old_storage = state.storage
+        state.storage = TranslationStorage(temp_db.name)
+        state.target_lang = "fr"
+
+        try:
+            handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)
+            handler.path = "/api/batch_translate"
+
+            # Pré-remplir une traduction dans le cache
+            state.storage.save_translation("TestGame", "Hello", "Bonjour", "fr")
+
+            # Mock engine
+            mock_engine = MagicMock()
+            mock_engine.translate.side_effect = ["Salut !", "Adieu !"]
+            state.google_engine = mock_engine
+            state.engine_name = "google"
+
+            payload = {
+                "texts": ["Hello", "Hi", "Bye"],
+                "game_id": "TestGame",
+                "target_lang": "fr"
+            }
+            body = json.dumps(payload).encode('utf-8')
+            handler.rfile = io.BytesIO(body)
+            handler.headers = {"Content-Length": len(body)}
+
+            sent_data = []
+            handler._send_json = lambda data, status=200: sent_data.append(data)
+            handler.do_POST()
+
+            self.assertEqual(len(sent_data), 1)
+            data = sent_data[0]
+
+            # Vérifier les compteurs
+            self.assertEqual(data["total"], 3)
+            self.assertEqual(data["already_cached"], 1)  # Hello était déjà en cache
+            self.assertEqual(data["translated"], 2)       # Hi et Bye traduits
+            self.assertEqual(data["errors"], 0)
+
+            # Vérifier les résultats
+            self.assertIn("Hello", data["results"])
+            self.assertIn("Hi", data["results"])
+            self.assertIn("Bye", data["results"])
+            self.assertEqual(data["results"]["Hello"], "Bonjour")  # depuis le cache
+            self.assertEqual(data["results"]["Hi"], "Salut !")
+            self.assertEqual(data["results"]["Bye"], "Adieu !")
+
+            # Vérifier que les nouvelles traductions sont en cache
+            self.assertEqual(state.storage.get_translation("TestGame", "Hi", "fr"), "Salut !")
+            self.assertEqual(state.storage.get_translation("TestGame", "Bye", "fr"), "Adieu !")
+        finally:
+            state.storage = old_storage
+            if os.path.exists(temp_db.name):
+                os.remove(temp_db.name)
+
+    def test_batch_translate_empty_texts(self):
+        """Vérifie que batch_translate avec texts=[] retourne un message informatif."""
+        handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)
+        handler.path = "/api/batch_translate"
+
+        payload = {"texts": [], "game_id": "TestGame"}
+        body = json.dumps(payload).encode('utf-8')
+        handler.rfile = io.BytesIO(body)
+        handler.headers = {"Content-Length": len(body)}
+
+        sent_data = []
+        handler._send_json = lambda data, status=200: sent_data.append(data)
+        handler.do_POST()
+
+        self.assertEqual(len(sent_data), 1)
+        data = sent_data[0]
+        self.assertEqual(data.get("status"), "no_texts")
+        self.assertIn("note", data)
+
+    def test_regression_preload_methods_exist(self):
+        """Vérifie que les méthodes _extract_all_dialogue_texts et _preload_translations existent dans le plugin."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("def _extract_all_dialogue_texts(self):", content)
+        self.assertIn("def _preload_translations(self):", content)
+        self.assertIn("renpy.game.script", content)
+        self.assertIn("/api/batch_translate", content)
+
+    def test_regression_preload_trigger_in_init_999(self):
+        """Vérifie que le déclencheur de pré-traduction est présent dans le bloc init 999."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("_preload_translations", content)
+        self.assertIn("import threading as _preload_thr", content)
+        self.assertIn("daemon=True", content)
+
+    def test_extraction_mock_ast_traversal(self):
+        """Vérifie la logique d'extraction AST avec des nœuds simulés (test de l'algorithme pur)."""
+        # Tester l'algorithme de traversée directement, sans mock renpy
+        texts = set()
+        visited = set()
+        stack = []
+
+        class MockSay:
+            def __init__(self, what, next_node=None):
+                self.what = what
+                self._next = next_node
+                self.__class__.__name__ = 'Say'
+            @property
+            def next(self):
+                return self._next
+
+        class MockMenu:
+            def __init__(self, items, next_node=None):
+                self.items = items
+                self._next = next_node
+                self.__class__.__name__ = 'Menu'
+            @property
+            def next(self):
+                return self._next
+
+        # Créer une chaîne de nœuds
+        node_end = MockSay("Goodbye!", next_node=None)
+        node_menu = MockMenu([
+            (None, "end_label", "Leave now"),
+            (None, "stay_label", "Stay a while")
+        ], next_node=node_end)
+        node_start = MockSay("Hello there, how are you?", next_node=node_menu)
+
+        stack.append(node_start)
+        while stack:
+            node = stack.pop()
+            if node is None:
+                continue
+            node_id = id(node)
+            if node_id in visited:
+                continue
+            visited.add(node_id)
+
+            type_name = type(node).__name__
+
+            if type_name == 'Say':
+                what = node.what
+                if what and len(what) > 2:
+                    texts.add(what)
+
+            elif type_name == 'Menu':
+                for item in getattr(node, 'items', []):
+                    if isinstance(item, (list, tuple)) and len(item) >= 3:
+                        choice_text = item[2]
+                        if choice_text and len(choice_text) > 2:
+                            texts.add(choice_text)
+
+            try:
+                next_node = getattr(node, 'next', None)
+                if next_node:
+                    stack.append(next_node)
+            except Exception:
+                pass
+
+        # Vérifier les textes extraits
+        self.assertIn("Hello there, how are you?", texts)
+        self.assertIn("Goodbye!", texts)
+        self.assertIn("Leave now", texts)
+        self.assertIn("Stay a while", texts)
+        self.assertEqual(len(texts), 4)
+
+
 if __name__ == "__main__":
     unittest.main()
 

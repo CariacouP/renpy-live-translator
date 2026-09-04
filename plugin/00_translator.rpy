@@ -16,6 +16,7 @@ init -999 python:
     import codecs
     import time
     import subprocess
+    import threading
     import atexit
 
     ## --------------------------------------------------------------------------
@@ -627,6 +628,167 @@ init -999 python:
             except Exception:
                 pass
 
+        def _extract_all_dialogue_texts(self):
+            """Walk the in-memory Ren'Py script AST to collect every reachable dialogue and choice text."""
+            texts = set()
+            visited = set()
+            stack = []
+
+            try:
+                import renpy
+                script = renpy.game.script
+                start_node = getattr(script, 'nod', None)
+                if start_node is None:
+                    return []
+                stack.append(start_node)
+            except Exception:
+                return []
+
+            def _safe_str(obj):
+                try:
+                    return _builtins.str(obj) if not _is_py2 else unicode(obj)
+                except Exception:
+                    return u""
+
+            while stack:
+                node = stack.pop()
+                if node is None:
+                    continue
+                node_id = id(node)
+                if node_id in visited:
+                    continue
+                visited.add(node_id)
+
+                type_name = type(node).__name__
+
+                # Say nodes — the main dialogue text
+                if type_name == 'Say':
+                    try:
+                        what = _safe_str(getattr(node, 'what', ''))
+                        if what and self.is_dialogue_text(what):
+                            texts.add(what)
+                    except Exception:
+                        pass
+
+                # Menu nodes — choice text
+                elif type_name == 'Menu':
+                    try:
+                        items = getattr(node, 'items', []) or []
+                        for item in items:
+                            if isinstance(item, (list, tuple)) and len(item) >= 3:
+                                choice_text = item[2]
+                                if choice_text and isinstance(choice_text, _str_types) and self.is_dialogue_text(_safe_str(choice_text)):
+                                    texts.add(_safe_str(choice_text))
+                                # Follow the choice's label
+                                label = item[1] if len(item) > 1 else None
+                                if label:
+                                    try:
+                                        target = renpy.game.script.lookup(label)
+                                        if target:
+                                            stack.append(target)
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
+
+                # If nodes — follow all branches
+                elif type_name == 'If':
+                    try:
+                        entries = getattr(node, 'entries', []) or []
+                        for entry in entries:
+                            if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                                block = entry[1]
+                                if block:
+                                    stack.append(block)
+                    except Exception:
+                        pass
+
+                # While nodes
+                elif type_name == 'While':
+                    try:
+                        block = getattr(node, 'block', None)
+                        if block:
+                            stack.append(block)
+                    except Exception:
+                        pass
+
+                # Call nodes
+                elif type_name == 'Call':
+                    try:
+                        label = getattr(node, 'label', None)
+                        if label:
+                            target = renpy.game.script.lookup(label)
+                            if target:
+                                stack.append(target)
+                    except Exception:
+                        pass
+
+                # Always follow the next node in the chain
+                try:
+                    next_node = getattr(node, 'next', None)
+                    if next_node:
+                        stack.append(next_node)
+                except Exception:
+                    pass
+
+            return list(texts)
+
+        def _preload_translations(self):
+            """Extract all dialogue texts from the script AST and batch-translate them."""
+            try:
+                texts = self._extract_all_dialogue_texts()
+                if not texts:
+                    return
+
+                # Deduplicate against already-cached / already-persisted texts
+                new_texts = [t for t in texts if t not in self.memory_cache and t not in self.persisted_strings]
+                if not new_texts:
+                    return
+
+                # Send batch to server
+                try:
+                    payload = json.dumps({
+                        "texts": new_texts,
+                        "game_id": self.game_id,
+                        "target_lang": self.target_lang
+                    })
+                    if not _is_py2 and isinstance(payload, str):
+                        payload = payload.encode('utf-8')
+
+                    req = _url_req.Request(
+                        "http://127.0.0.1:5005/api/batch_translate",
+                        data=payload,
+                        headers={"Content-Type": "application/json"}
+                    )
+                    response = self.opener.open(req, timeout=120.0)
+                    raw = response.read()
+                    if not _is_py2 and isinstance(raw, bytes):
+                        raw = raw.decode('utf-8', 'ignore')
+                    data = json.loads(raw)
+                except Exception:
+                    return  # Server offline or timeout — will be done next session
+
+                if not data or not isinstance(data, _dict_types):
+                    return
+
+                results = data.get("results", {})
+                lang_name = data.get("lang_name", "french")
+
+                if not results:
+                    return
+
+                # Inject into memory and persist to disk
+                for source, translation in results.items():
+                    if translation and translation != source:
+                        self.memory_cache[source] = translation
+                        self.memory_cache[translation] = translation
+                        try:
+                            self._persist_translation(lang_name, source, translation)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
         SKIP_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.ogg', '.mp3', '.wav', '.opus', '.rpy', '.rpyc', '.ttf', '.otf', '.woff', '.json', '.xml', '.csv')
         SKIP_PREFIXES = ('gui/', 'images/', 'audio/', 'music/', 'sound/', 'voice/', 'fonts/', 'tl/', 'cache/', '#', '{#', '@', 'http://', 'https://')
         SKIP_UI_WORDS = (
@@ -865,6 +1027,18 @@ init 999 python:
                     return _orig_trans_string(s, *args, **kwargs)
                 _live_translate_string._live_trans_hooked = True
                 _rpy_trans.translate_string = _live_translate_string
+    except Exception:
+        pass
+
+    # 4. Background preload of all dialogue (non-blocking)
+    try:
+        import threading as _preload_thr
+        def _do_preload():
+            try:
+                _live_translator_instance._preload_translations()
+            except Exception:
+                pass
+        _preload_thr.Thread(target=_do_preload, daemon=True).start()
     except Exception:
         pass
 

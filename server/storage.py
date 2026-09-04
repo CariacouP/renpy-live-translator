@@ -78,6 +78,25 @@ class TranslationStorage:
                 return row["translated_text"]
             return None
 
+    def batch_get_existing(self, game_id, target_lang, source_texts):
+        """
+        Récupère toutes les traductions existantes pour une liste de textes source.
+        Retourne un dict {source_text: translated_text} pour les textes déjà en cache.
+        Beaucoup plus efficace que N appels individuels à get_translation().
+        """
+        if not source_texts:
+            return {}
+        with self._connection() as conn:
+            placeholders = ",".join("?" for _ in source_texts)
+            cursor = conn.execute(
+                f"""
+                SELECT source_text, translated_text FROM translations
+                WHERE game_id = ? AND target_lang = ? AND source_text IN ({placeholders})
+                """,
+                (game_id, target_lang) + tuple(source_texts)
+            )
+            return {row["source_text"]: row["translated_text"] for row in cursor.fetchall()}
+
     def save_translation(self, game_id, source_text, translated_text, target_lang):
         """Enregistre ou met à jour une traduction."""
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")

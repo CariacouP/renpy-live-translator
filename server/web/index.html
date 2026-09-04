@@ -249,6 +249,7 @@
       <p data-i18n="guide_text">Drop the file <code>plugin/00_translator.rpy</code> into the <code>game/</code> folder of your Ren'Py game, then play!</p>
     </div>
     <button class="btn btn-secondary" onclick="exportTranslations()" data-i18n="btn_export">💾 Export cache (.rpy / .json)</button>
+    <button class="btn btn-primary" onclick="preTranslateAll()" data-i18n="btn_pre_translate">🚀 Pre-Translate All</button>
   </div>
 
   <div class="grid">
@@ -472,6 +473,7 @@
       guide_title: "Quick Start Guide:",
       guide_text: "Drop the file <code>plugin/00_translator.rpy</code> into the <code>game/</code> folder of your Ren'Py game, then play!",
       btn_export: "💾 Export cache (.rpy / .json)",
+      btn_pre_translate: "🚀 Pre-Translate All",
       card_settings: "⚙️ Active Settings",
       lbl_engine: "Translation Engine:",
       opt_google: "Google Translate (⚡ Ultra-fast ~100ms)",
@@ -532,6 +534,7 @@
       guide_title: "Mode d'emploi express :",
       guide_text: "Glissez simplement le fichier <code>plugin/00_translator.rpy</code> dans le sous-dossier <code>game/</code> de votre jeu Ren'Py, puis jouez !",
       btn_export: "💾 Exporter le cache (.rpy / .json)",
+      btn_pre_translate: "🚀 Pré-traduire tout",
       card_settings: "⚙️ Configuration Active",
       lbl_engine: "Moteur de traduction :",
       opt_google: "Google Translate (⚡ Ultra-rapide ~100ms)",
@@ -1243,6 +1246,39 @@
 
   function exportTranslations() {
     window.open('/api/export?format=rpy', '_blank');
+  }
+
+  async function preTranslateAll() {
+    if (isShuttingDown) return;
+    const dict = I18N[activeLang] || I18N['en'];
+    const btn = document.querySelector('[onclick="preTranslateAll()"]');
+    const origText = btn.innerText;
+    btn.disabled = true;
+    btn.innerText = '⏳ Scanning & translating...';
+
+    try {
+      const res = await fetch('/api/batch_translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      const data = await res.json();
+
+      if (data.note) {
+        alert(dict.btn_pre_translate + '\n\n' + data.note);
+      } else if (data.error) {
+        alert('Error: ' + data.error);
+      } else {
+        alert(`Done! ${data.total} texts found, ${data.already_cached} cached, ${data.translated} translated, ${data.errors} errors.`);
+      }
+    } catch (err) {
+      alert('Pre-translate failed: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerText = origText;
+      loadStats();
+      loadHistory();
+    }
   }
 
   function escapeHtml(str) {

@@ -25,6 +25,7 @@
   * **LibreTranslate:** Open-source, private, and customizable endpoint.
   * **Local AI (Ollama):** 100% offline and confidential (automatic detection of models like `qwen2.5`, `llama3.1`, `mistral`, `gemma2`).
 * **🛡️ Native Ren'Py Syntax Protection:** Style tags (`{b}`, `{i}`, `{color}`) and variable interpolations (`[player_name]`) are safely preserved and shielded from corruption.
+* **🏗️ Auto Pre-Translation (AST Scan):** At game launch, the plugin automatically extracts all dialogue and menu texts from the Ren'Py script AST in memory and batch-translates them via the server. Entire visual novels are pre-loaded for **zero-latency in the very first session** — no need to replay routes. A "🚀 Pre-Translate All" button is also available in the web dashboard.
 * **📊 Real-Time Web Dashboard:** Watch dialogue lines stream live as you play, monitor cache statistics, configure API keys with one-click signup links, and switch languages or translation engines on the fly without restarting the game.
 * **🌐 Cross-Platform & Backwards Compatible:** Runs on macOS, Linux, and Windows. Fully compatible with both **Ren'Py 7** (Python 2) and **Ren'Py 8+** (Python 3).
 
@@ -146,7 +147,7 @@ renpy-live-translator/
 │       └── index.html          # Interactive real-time web dashboard
 ├── tests/
 │   ├── __init__.py             # Test package marker
-│   └── test_live_translator.py # Automated test suite (33 unit & non-regression tests)
+│   └── test_live_translator.py # Automated test suite (46 unit & non-regression tests)
 ├── AGENTS.md                   # Permanent AI & developer architecture guidelines
 ├── config.example.ini          # Example configuration template for public repositories
 ├── config.ini                  # Local configuration (created on launch)
@@ -159,12 +160,15 @@ renpy-live-translator/
 
 ## 🧪 Testing & Non-Regression
 
-The test suite relies entirely on Python's standard `unittest` library (zero external test dependencies required) and verifies 33 unit and non-regression tests covering:
+The test suite relies entirely on Python's standard `unittest` library (zero external test dependencies required) and verifies 46 unit and non-regression tests covering:
 * Native Ren'Py target language activation (`config.default_language` & `renpy.change_language`)
 * Infallible path resolution (`_get_game_dir`) across macOS `.app` bundles, Linux, and Windows
 * Immediate live in-memory string injection (`StringTranslator.translations`)
 * Zero-lag UI menu protection with `is_dialogue_text` filtering
 * Anti-hook cascade protection and safe network timeouts
+* Batch pre-translation endpoint (`/api/batch_translate`) with SQLite deduplication
+* AST extraction algorithm (Say/Menu/If/While/Call node traversal)
+* Automated preload trigger at game launch in `init 999`
 
 ```bash
 python3 -m unittest discover -s tests
