@@ -675,19 +675,17 @@ init -999 python:
                     try:
                         items = getattr(node, 'items', []) or []
                         for item in items:
-                            if isinstance(item, (list, tuple)) and len(item) >= 3:
-                                choice_text = item[2]
-                                if choice_text and isinstance(choice_text, _str_types) and self.is_dialogue_text(_safe_str(choice_text)):
+                            if isinstance(item, (list, tuple)) and len(item) >= 1:
+                                choice_text = item[0]
+                                if choice_text and isinstance(choice_text, _str_types) and not self._should_skip(choice_text):
                                     texts.add(_safe_str(choice_text))
-                                # Follow the choice's label
-                                label = item[1] if len(item) > 1 else None
-                                if label:
-                                    try:
-                                        target = renpy.game.script.lookup(label)
-                                        if target:
-                                            stack.append(target)
-                                    except Exception:
-                                        pass
+                                # Follow the choice's block
+                                if len(item) >= 3 and item[2]:
+                                    sub_block = item[2]
+                                    if isinstance(sub_block, list):
+                                        stack.extend(sub_block)
+                                    else:
+                                        stack.append(sub_block)
                     except Exception:
                         pass
 
