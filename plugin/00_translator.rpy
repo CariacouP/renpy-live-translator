@@ -65,10 +65,16 @@ init -999 python:
         SERVER_CONFIG_URL = "http://127.0.0.1:5005/api/config"
         SERVER_SHUTDOWN_URL = "http://127.0.0.1:5005/api/shutdown"
         TIMEOUT = 4.5  # Reliable timeout per dialogue line ensuring full translation returns
+        _dialogue_check_cache = {}
+        skipped_cache = set()
+        persisted_strings = set()
+        memory_cache = {}
 
         def __init__(self):
             self.memory_cache = {}
             self.persisted_strings = set()
+            self.skipped_cache = set(self.SKIP_UI_WORDS)
+            self._dialogue_check_cache = {}
             self.enabled = True
             self.spawned_server = False
             self.server_process = None
@@ -86,6 +92,9 @@ init -999 python:
 
             # Pre-load translations already saved locally in game/tl/
             self._load_local_translations()
+
+            # Initialize background lookahead prefetcher
+            self._init_prefetcher()
 
             # Check server status, auto-start and prompt language if configured
             self._ensure_server()
@@ -585,9 +594,8 @@ init -999 python:
                                     val = stripped[4:].strip()
                                     if val.startswith('"') and val.endswith('"'):
                                         curr_new = self._unescape_renpy_str(val[1:-1])
-                                        if curr_old != curr_new:
-                                            self.memory_cache[curr_old] = curr_new
-                                            self.memory_cache[curr_new] = curr_new
+                                        self.memory_cache[curr_old] = curr_new
+                                        self.memory_cache[curr_new] = curr_new
                                         self.persisted_strings.add(curr_old)
                                         curr_old = None
             except Exception:
@@ -638,6 +646,121 @@ init -999 python:
             except Exception:
                 pass
 
+        def _is_main_thread(self):
+            """Checks if caller is on the main Python thread."""
+            try:
+                import threading
+                if hasattr(threading, 'main_thread'):
+                    return threading.current_thread() == threading.main_thread()
+                return threading.current_thread().name == "MainThread" or isinstance(
+                    threading.current_thread(), getattr(threading, '_MainThread', type(None))
+                )
+            except Exception:
+                return True
+
+        def _is_predicting(self):
+            """Returns True if Ren'Py is currently running its statement/screen prediction coroutine."""
+            if not self._is_main_thread():
+                return False
+            try:
+                import renpy
+                if hasattr(renpy, 'predicting') and callable(renpy.predicting):
+                    return bool(renpy.predicting())
+                if hasattr(renpy, 'display') and hasattr(renpy.display, 'predict'):
+                    return bool(getattr(renpy.display.predict, 'predicting', False))
+            except Exception:
+                pass
+            return False
+
+        def _init_prefetcher(self):
+            """Initializes background lookahead worker to pre-translate ahead of the player."""
+            self._prefetch_queue = []
+            self._prefetch_lock = threading.Lock()
+            self._prefetch_active = True
+
+            def _worker():
+                while getattr(self, '_prefetch_active', True):
+                    item = None
+                    with self._prefetch_lock:
+                        if self._prefetch_queue:
+                            item = self._prefetch_queue.pop(0)
+                    if item:
+                        try:
+                            if item not in self.memory_cache and item not in self.persisted_strings:
+                                self.translate(item)
+                        except Exception:
+                            pass
+                    else:
+                        time.sleep(0.08)
+
+            t = threading.Thread(target=_worker)
+            t.daemon = True
+            t.start()
+
+        def _queue_prefetch_texts(self, texts):
+            """Queues upcoming texts for background translation."""
+            if not texts:
+                return
+            mem = getattr(self, 'memory_cache', {})
+            persisted = getattr(self, 'persisted_strings', set())
+            with self._prefetch_lock:
+                for t in texts:
+                    if not t or not isinstance(t, _str_types):
+                        continue
+                    if len(self._prefetch_queue) >= 50:
+                        break
+                    if t not in self._prefetch_queue and t not in mem and t not in persisted:
+                        self._prefetch_queue.append(t)
+
+        def _trigger_lookahead_prefetch(self):
+            """Prefetch the next upcoming dialogue lines and choices in the background."""
+            if self._is_predicting():
+                return
+            try:
+                import renpy
+                ctx_fn = getattr(renpy.game, 'context', None)
+                if not ctx_fn or not callable(ctx_fn):
+                    return
+                c = ctx_fn()
+                current_name = getattr(c, 'current', None)
+                if not current_name:
+                    return
+                script = getattr(renpy.game, 'script', None)
+                if not script or not hasattr(script, 'lookup'):
+                    return
+                node = script.lookup(current_name)
+                if not node:
+                    return
+
+                texts_to_prefetch = []
+                curr = getattr(node, 'next', None)
+                count = 0
+                while curr and count < 5:
+                    tname = type(curr).__name__
+                    if tname == 'Say':
+                        what = getattr(curr, 'what', '')
+                        if what and isinstance(what, _str_types) and self.is_dialogue_text(what):
+                            if what not in self.memory_cache and what not in self.persisted_strings and what not in texts_to_prefetch:
+                                texts_to_prefetch.append(what)
+                        count += 1
+                    elif tname == 'Menu':
+                        items = getattr(curr, 'items', []) or []
+                        for item in items:
+                            if isinstance(item, (list, tuple)):
+                                for elem in item:
+                                    if elem and isinstance(elem, _str_types) and not self._should_skip(elem):
+                                        if elem not in self.memory_cache and elem not in self.persisted_strings and elem not in texts_to_prefetch:
+                                            texts_to_prefetch.append(elem)
+                        count += 1
+                    elif tname in ('If', 'While'):
+                        count += 1
+                    curr = getattr(curr, 'next', None)
+
+                if texts_to_prefetch:
+                    self._queue_prefetch_texts(texts_to_prefetch)
+            except Exception:
+                pass
+
         def _extract_all_dialogue_texts(self):
             """Walk the in-memory Ren'Py script AST to collect every reachable dialogue and choice text."""
             texts = set()
@@ -648,9 +771,16 @@ init -999 python:
                 import renpy
                 script = renpy.game.script
                 start_node = getattr(script, 'nod', None)
-                if start_node is None:
+                if start_node is not None:
+                    stack.append(start_node)
+                else:
+                    namemap = getattr(script, 'namemap', None)
+                    if isinstance(namemap, dict):
+                        for node in namemap.values():
+                            if node is not None:
+                                stack.append(node)
+                if not stack:
                     return []
-                stack.append(start_node)
             except Exception:
                 return []
 
@@ -753,47 +883,85 @@ init -999 python:
                 if not new_texts:
                     return
 
-                # Send batch to server
-                try:
-                    payload = json.dumps({
-                        "texts": new_texts,
-                        "game_id": self.game_id,
-                        "target_lang": self.target_lang
-                    })
-                    if not _is_py2 and isinstance(payload, str):
-                        payload = payload.encode('utf-8')
+                # Chunk texts into small batches of 25 to avoid network timeouts and keep server responsive
+                chunk_size = 25
+                for i in range(0, len(new_texts), chunk_size):
+                    chunk = new_texts[i:i + chunk_size]
+                    try:
+                        payload = json.dumps({
+                            "texts": chunk,
+                            "game_id": self.game_id,
+                            "target_lang": self.target_lang
+                        })
+                        if not _is_py2 and isinstance(payload, str):
+                            payload = payload.encode('utf-8')
 
-                    req = _url_req.Request(
-                        "http://127.0.0.1:5005/api/batch_translate",
-                        data=payload,
-                        headers={"Content-Type": "application/json"}
-                    )
-                    response = self.opener.open(req, timeout=120.0)
-                    raw = response.read()
-                    if not _is_py2 and isinstance(raw, bytes):
-                        raw = raw.decode('utf-8', 'ignore')
-                    data = json.loads(raw)
-                except Exception:
-                    return  # Server offline or timeout — will be done next session
+                        req = _url_req.Request(
+                            "http://127.0.0.1:5005/api/batch_translate",
+                            data=payload,
+                            headers={"Content-Type": "application/json"}
+                        )
+                        response = self.opener.open(req, timeout=120.0)
+                        raw = response.read()
+                        if not _is_py2 and isinstance(raw, bytes):
+                            raw = raw.decode('utf-8', 'ignore')
+                        data = json.loads(raw)
+                    except Exception:
+                        continue
 
-                if not data or not isinstance(data, _dict_types):
-                    return
+                    if not data or not isinstance(data, _dict_types):
+                        continue
 
-                results = data.get("results", {})
-                lang_name = data.get("lang_name", "french")
+                    results = data.get("results", {})
+                    lang_name = data.get("lang_name", "french")
+                    if not results:
+                        continue
 
-                if not results:
-                    return
+                    # Inject into memory and persist all batch items in a single file write
+                    to_persist = []
+                    for source, translation in results.items():
+                        if translation and translation != source:
+                            self.memory_cache[source] = translation
+                            self.memory_cache[translation] = translation
+                            if source not in self.persisted_strings:
+                                to_persist.append((source, translation))
 
-                # Inject into memory and persist to disk
-                for source, translation in results.items():
-                    if translation and translation != source:
-                        self.memory_cache[source] = translation
-                        self.memory_cache[translation] = translation
+                    if to_persist:
                         try:
-                            self._persist_translation(lang_name, source, translation)
+                            lang_folder = lang_name or self.lang_folder or "french"
+                            game_dir = self.game_dir or self._get_game_dir()
+                            self.game_dir = game_dir
+                            tl_dir = os.path.join(game_dir, "tl", lang_folder)
+                            if not os.path.exists(tl_dir):
+                                os.makedirs(tl_dir)
+
+                            file_path = os.path.join(tl_dir, "live_translations.rpy")
+                            write_header = not os.path.exists(file_path) or os.path.getsize(file_path) == 0
+
+                            with codecs.open(file_path, 'a', encoding='utf-8') as f:
+                                if write_header:
+                                    f.write(u"# Translation file automatically generated by Live Translator\n")
+                                    f.write(u"translate {} strings:\n\n".format(lang_folder))
+                                for src, trans in to_persist:
+                                    self.persisted_strings.add(src)
+                                    f.write(u'    old "{}"\n'.format(self._escape_renpy_str(src)))
+                                    f.write(u'    new "{}"\n\n'.format(self._escape_renpy_str(trans)))
+
+                            # Immediately update Ren'Py active in-memory translator
+                            try:
+                                import renpy
+                                active_lang = getattr(renpy.game.preferences, 'language', None) or lang_folder
+                                stl = renpy.game.script.translator.strings.get(active_lang)
+                                if stl and hasattr(stl, 'translations'):
+                                    for src, trans in to_persist:
+                                        stl.translations[src] = trans
+                            except Exception:
+                                pass
                         except Exception:
                             pass
+
+                    # Small pause between chunks to prioritize live user gameplay
+                    time.sleep(0.3)
             except Exception:
                 pass
 
@@ -806,7 +974,9 @@ init -999 python:
             'quick save', 'quick load', 'q.save', 'q.load', 'dialogue', 'fullscreen',
             'window', 'music', 'sound', 'voice', 'display', 'rollback', 'empty slot',
             'auto-forward time', 'text speed', 'music volume', 'sound volume', 'voice volume',
-            'rollback side', 'unseen text', 'after choices', 'transitions'
+            'rollback side', 'unseen text', 'after choices', 'transitions',
+            'yes', 'no', 'ok', 'cancel', 'confirm', 'continue', 'close', 'next',
+            'language', 'page', 'slot', 'on', 'off'
         )
 
         def is_translatable_ui_string(self, text):
@@ -850,53 +1020,56 @@ init -999 python:
             """Identifies human-readable story dialogue lines while ignoring short UI buttons, save slots, and menus."""
             if not text or not isinstance(text, _str_types):
                 return False
+
+            cache = getattr(self, '_dialogue_check_cache', None)
+            if cache is not None and text in cache:
+                return cache[text]
+
             s = text.strip()
             if len(s) < 3:
-                return False
+                res = False
+            elif s.startswith('{#'):
+                res = False
+            elif '{#file_time}' in s or '{#weekday}' in s or '{#slot' in s:
+                res = False
+            elif '[config.' in s or '[renpy.' in s or '{a=' in s:
+                res = False
+            else:
+                s_lower = s.lower()
+                if s_lower in self.SKIP_UI_WORDS:
+                    res = False
+                elif any(confirm in s_lower for confirm in (
+                    'are you sure you want to return',
+                    'are you sure you want to quit',
+                    'are you sure you want to overwrite',
+                    'this will lose unsaved progress'
+                )):
+                    res = False
+                elif any(s.startswith(pfx) or s_lower.startswith(pfx) for pfx in self.SKIP_PREFIXES):
+                    res = False
+                elif any(s_lower.endswith(ext) for ext in self.SKIP_EXTENSIONS):
+                    res = False
+                else:
+                    # Strip Ren'Py style/formatting tags ({color...}, {size...}, etc.) before evaluating words
+                    clean_s = re.sub(r'\{[^{}]*\}', '', s).strip()
+                    if len(clean_s) < 2:
+                        res = False
+                    else:
+                        clean_lower = clean_s.lower().strip('!?. \t\r\n')
+                        if clean_lower in self.SKIP_UI_WORDS:
+                            res = False
+                        else:
+                            words = clean_s.split()
+                            if len(words) >= 3:
+                                res = True
+                            elif len(words) >= 1 and any(p in clean_s for p in ('!', '?', '...', '—', '“', '”', '"')):
+                                res = True
+                            else:
+                                res = False
 
-            # Immediate exclusion of Ren'Py text tags, file/save slot timestamps, and system UI
-            if s.startswith('{#'):
-                return False
-            if '{#file_time}' in s or '{#weekday}' in s or '{#slot' in s:
-                return False
-            if '[config.' in s or '[renpy.' in s or '{a=' in s:
-                return False
-
-            s_lower = s.lower()
-            if s_lower in self.SKIP_UI_WORDS:
-                return False
-
-            # Exclude common system dialogue confirmation questions
-            if any(confirm in s_lower for confirm in (
-                'are you sure you want to return',
-                'are you sure you want to quit',
-                'are you sure you want to overwrite',
-                'this will lose unsaved progress'
-            )):
-                return False
-
-            for pfx in self.SKIP_PREFIXES:
-                if s.startswith(pfx) or s_lower.startswith(pfx):
-                    return False
-            for ext in self.SKIP_EXTENSIONS:
-                if s_lower.endswith(ext):
-                    return False
-
-            # Strip Ren'Py style/formatting tags ({color...}, {size...}, etc.) before evaluating words
-            clean_s = re.sub(r'\{[^{}]*\}', '', s).strip()
-            if len(clean_s) < 2:
-                return False
-
-            clean_lower = clean_s.lower().strip('!?. \t\r\n')
-            if clean_lower in self.SKIP_UI_WORDS:
-                return False
-
-            words = clean_s.split()
-            if len(words) >= 3:
-                return True
-            if len(words) >= 1 and any(p in clean_s for p in ('!', '?', '...', '—', '“', '”', '"')):
-                return True
-            return False
+            if cache is not None:
+                cache[text] = res
+            return res
 
         def _should_skip(self, text):
             """Avoid sending empty strings, pure numbers, or punctuation."""
@@ -950,6 +1123,11 @@ init -999 python:
             if text_str in self.memory_cache:
                 return self.memory_cache[text_str]
 
+            # Fast-path: Never block UI thread during Ren'Py prediction coroutines
+            if self._is_predicting():
+                self._queue_prefetch_texts([text_str])
+                return text
+
             # 2. Query local server
             translated = None
             lang_name = "french"
@@ -981,7 +1159,18 @@ init -999 python:
 
     def _say_menu_filter_hook(text):
         """Official Ren'Py hook for all dialogue lines and choice menus."""
-        return _live_translator_instance.translate(text)
+        if _live_translator_instance._is_predicting():
+            if text in _live_translator_instance.memory_cache:
+                return _live_translator_instance.memory_cache[text]
+            _live_translator_instance._queue_prefetch_texts([text])
+            return text
+
+        result = _live_translator_instance.translate(text)
+        try:
+            _live_translator_instance._trigger_lookahead_prefetch()
+        except Exception:
+            pass
+        return result
 
     # 1. Register dialogue and choice menu filter
     config.say_menu_text_filter = _say_menu_filter_hook
@@ -991,12 +1180,20 @@ init 999 python:
     ## --------------------------------------------------------------------------
     ## LATE HOOK REINFORCEMENT & NATIVE LANGUAGE ACTIVATION
     ## --------------------------------------------------------------------------
-    # 1. Activate target language natively in Ren'Py
+    # 1. Activate target language natively in Ren'Py and bulk-inject memory_cache
     try:
         target_folder = _live_translator_instance.lang_folder or "french"
         config.default_language = target_folder
         if getattr(renpy.game.preferences, 'language', None) != target_folder:
             renpy.change_language(target_folder)
+
+        # Bulk inject loaded memory_cache into Ren'Py's native StringTranslator
+        active_lang = getattr(renpy.game.preferences, 'language', None) or target_folder
+        stl = renpy.game.script.translator.strings.get(active_lang)
+        if stl and hasattr(stl, 'translations'):
+            for k, v in _live_translator_instance.memory_cache.items():
+                if k != v:
+                    stl.translations[k] = v
     except Exception:
         pass
 
@@ -1009,7 +1206,19 @@ init 999 python:
                     text = _prev_filter(text)
                 except Exception:
                     pass
-            return _live_translator_instance.translate(text)
+
+            if _live_translator_instance._is_predicting():
+                if text in _live_translator_instance.memory_cache:
+                    return _live_translator_instance.memory_cache[text]
+                _live_translator_instance._queue_prefetch_texts([text])
+                return text
+
+            result = _live_translator_instance.translate(text)
+            try:
+                _live_translator_instance._trigger_lookahead_prefetch()
+            except Exception:
+                pass
+            return result
         config.say_menu_text_filter = _chained_filter
 
     # 3. Universal Ren'Py translate_string hook (with zero-lag dialogue & menu protection)
@@ -1018,19 +1227,51 @@ init 999 python:
         if hasattr(_rpy_trans, 'translate_string'):
             if not getattr(_rpy_trans.translate_string, '_live_trans_hooked', False):
                 _orig_trans_string = _rpy_trans.translate_string
+                _screen_check_cache = [0.0, False]
+
                 def _live_translate_string(s, *args, **kwargs):
                     try:
+                        # Fast-path 1: Instant O(1) in-memory cache lookup
+                        if s in _live_translator_instance.memory_cache:
+                            return _live_translator_instance.memory_cache[s]
+
+                        # Fast-path 2: Native Ren'Py translation
                         res = _orig_trans_string(s, *args, **kwargs)
                         if res != s:
                             return res
-                        # Fast-path: Never query network during system menu screens or sub-contexts
+
+                        # Fast-path 3: Instant O(1) skipped/UI string check
+                        if s in _live_translator_instance.skipped_cache:
+                            return res
+
+                        # Fast-path 4: Never query network during prediction or sub-contexts
+                        if _live_translator_instance._is_predicting():
+                            if isinstance(s, _str_types) and _live_translator_instance.is_dialogue_text(s):
+                                _live_translator_instance._queue_prefetch_texts([s])
+                            return res
+
                         if hasattr(renpy, 'context_nesting_level') and renpy.context_nesting_level() > 0:
                             return res
-                        for _sname in ('save', 'load', 'file_slots', 'preferences', 'help', 'history', 'main_menu'):
-                            if hasattr(renpy, 'get_screen') and renpy.get_screen(_sname):
-                                return res
-                        if isinstance(s, _str_types) and _live_translator_instance.is_dialogue_text(s):
-                            return _live_translator_instance.translate(s)
+
+                        # Fast-path 5: Throttled system menu screen detection (50ms cache)
+                        now = time.time()
+                        if now - _screen_check_cache[0] > 0.05:
+                            _screen_check_cache[0] = now
+                            in_sys = False
+                            for _sname in ('save', 'load', 'file_slots', 'preferences', 'help', 'history', 'main_menu'):
+                                if hasattr(renpy, 'get_screen') and renpy.get_screen(_sname):
+                                    in_sys = True
+                                    break
+                            _screen_check_cache[1] = in_sys
+                        if _screen_check_cache[1]:
+                            return res
+
+                        # Dialogue evaluation with memoization
+                        if isinstance(s, _str_types):
+                            if _live_translator_instance.is_dialogue_text(s):
+                                return _live_translator_instance.translate(s)
+                            else:
+                                _live_translator_instance.skipped_cache.add(s)
                     except Exception:
                         pass
                     return _orig_trans_string(s, *args, **kwargs)

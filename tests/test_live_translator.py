@@ -1162,6 +1162,179 @@ class TestBatchPreload(unittest.TestCase):
         self.assertIn("if source_text in self.persisted_strings:", content)
         self.assertIn("if translated != text_str:", content)
 
+    def test_regression_performance_caches_and_fast_paths(self):
+        """Vérifie l'existence des fast-paths de performance O(1) et des caches de dialogue."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Vérifier la présence des structures de cache O(1)
+        self.assertIn("skipped_cache", content)
+        self.assertIn("_dialogue_check_cache", content)
+
+        # Fast-paths dans _live_translate_string
+        self.assertIn("if s in _live_translator_instance.memory_cache:", content)
+        self.assertIn("if s in _live_translator_instance.skipped_cache:", content)
+        self.assertIn("_live_translator_instance.skipped_cache.add(s)", content)
+
+        # Injection native en masse à init 999
+        self.assertIn("stl.translations[k] = v", content)
+
+        # Écriture groupée en un seul flux de fichier pour _preload_translations
+        self.assertIn("to_persist = []", content)
+        self.assertIn("for src, trans in to_persist:", content)
+
+    def test_dialogue_memoization_behavior(self):
+        """Vérifie que is_dialogue_text utilise son cache pour les appels répétés."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        py_lines = []
+        skip_block = False
+        for line in lines:
+            if line.strip().startswith("init 999"):
+                skip_block = True
+                continue
+            if skip_block:
+                continue
+            if line.strip().startswith("init -999") or "config.say_menu_text_filter" in line or "_live_translator_instance = LiveTranslator()" in line:
+                continue
+            if line.startswith("    "):
+                py_lines.append(line[4:])
+            else:
+                py_lines.append(line)
+
+        test_scope = {"config": type("MockConfig", (), {"gamedir": "/mock/game", "name": "TestGame"})()}
+        exec("".join(py_lines), test_scope)
+
+        LiveTranslatorClass = test_scope["LiveTranslator"]
+        with patch.object(LiveTranslatorClass, '__init__', lambda self: None):
+            instance = LiveTranslatorClass()
+            instance._dialogue_check_cache = {}
+            instance.skipped_cache = set()
+
+            # Premier appel calcule et met en cache
+            res1 = instance.is_dialogue_text("Hello there, how are you?")
+            self.assertTrue(res1)
+            self.assertIn("Hello there, how are you?", instance._dialogue_check_cache)
+            self.assertTrue(instance._dialogue_check_cache["Hello there, how are you?"])
+
+            # Deuxième appel retourne immédiatement le résultat depuis le cache
+            instance._dialogue_check_cache["Hello there, how are you?"] = False # modifier artificiellement
+            self.assertFalse(instance.is_dialogue_text("Hello there, how are you?"))
+
+    def test_regression_lookahead_prefetcher(self):
+        """Vérifie le fonctionnement du préchargeur prédictif (lookahead prefetcher)."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Vérifier que les méthodes du lookahead prefetcher sont définies et câblées
+        self.assertIn("def _init_prefetcher(self):", content)
+        self.assertIn("def _queue_prefetch_texts(self, texts):", content)
+        self.assertIn("def _trigger_lookahead_prefetch(self):", content)
+        self.assertIn("_trigger_lookahead_prefetch", content)
+        self.assertIn("namemap = getattr(script, 'namemap', None)", content)
+
+    def test_lookahead_queue_deduplication(self):
+        """Vérifie que la file de préchargement évite les doublons et les chaînes déjà en cache."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        py_lines = []
+        skip_block = False
+        for line in lines:
+            if line.strip().startswith("init 999"):
+                skip_block = True
+                continue
+            if skip_block:
+                continue
+            if line.strip().startswith("init -999") or "config.say_menu_text_filter" in line or "_live_translator_instance = LiveTranslator()" in line:
+                continue
+            if line.startswith("    "):
+                py_lines.append(line[4:])
+            else:
+                py_lines.append(line)
+
+        test_scope = {"config": type("MockConfig", (), {"gamedir": "/mock/game", "name": "TestGame"})()}
+        exec("".join(py_lines), test_scope)
+
+        LiveTranslatorClass = test_scope["LiveTranslator"]
+        with patch.object(LiveTranslatorClass, '__init__', lambda self: None):
+            import threading
+            instance = LiveTranslatorClass()
+            instance._prefetch_queue = []
+            instance._prefetch_lock = threading.Lock()
+            instance.memory_cache = {"Already translated": "Déjà traduit"}
+
+            instance._queue_prefetch_texts(["Already translated", "Upcoming line 1", "Upcoming line 2"])
+            self.assertNotIn("Already translated", instance._prefetch_queue)
+            self.assertIn("Upcoming line 1", instance._prefetch_queue)
+            self.assertIn("Upcoming line 2", instance._prefetch_queue)
+            self.assertEqual(len(instance._prefetch_queue), 2)
+
+            # Évite d'ajouter à nouveau si déjà dans la file
+            instance._queue_prefetch_texts(["Upcoming line 1"])
+            self.assertEqual(len(instance._prefetch_queue), 2)
+
+    def test_prediction_nonblocking_and_prefetch(self):
+        """Vérifie que la phase de prédiction de Ren'Py ne bloque JAMAIS sur le réseau."""
+        rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
+        with open(rpy_path, "r", encoding="utf-8") as f:
+            plugin_code = f.read()
+
+        py_lines = []
+        skip_block = False
+        for line in plugin_code.splitlines(True):
+            if "init 999 python:" in line:
+                skip_block = True
+                continue
+            if skip_block:
+                continue
+            if line.strip().startswith("init -999") or "config.say_menu_text_filter" in line or "_live_translator_instance = LiveTranslator()" in line:
+                continue
+            if line.startswith("    "):
+                py_lines.append(line[4:])
+            else:
+                py_lines.append(line)
+
+        test_scope = {"config": type("MockConfig", (), {"gamedir": "/mock/game", "name": "TestGame"})()}
+        exec("".join(py_lines), test_scope)
+
+        LiveTranslatorClass = test_scope["LiveTranslator"]
+        with patch.object(LiveTranslatorClass, '__init__', lambda self: None):
+            import threading
+            instance = LiveTranslatorClass()
+            instance.enabled = True
+            instance.memory_cache = {"Cached line": "Ligne en cache"}
+            instance.persisted_strings = set()
+            instance._prefetch_queue = []
+            instance._prefetch_lock = threading.Lock()
+            instance._query_server = MagicMock(return_value={"translated": "Should not be called"})
+
+            # 1. Quand Ren'Py n'est pas en prédiction, translate appelle le serveur
+            with patch.object(instance, '_is_predicting', return_value=False):
+                res = instance.translate("Fresh line")
+                self.assertEqual(res, "Should not be called")
+                self.assertEqual(instance._query_server.call_count, 1)
+
+            instance._query_server.reset_mock()
+
+            # 2. Quand Ren'Py EST en prédiction :
+            with patch.object(instance, '_is_predicting', return_value=True):
+                # 2a. Si le texte est déjà en cache, retourne la traduction instantanément (0 ms)
+                self.assertEqual(instance.translate("Cached line"), "Ligne en cache")
+                self.assertEqual(instance._query_server.call_count, 0)
+
+                # 2b. Si le texte n'est PAS en cache, ne bloque JAMAIS sur le serveur :
+                # retourne le texte original et l'ajoute à la file de prefetch
+                res_predict = instance.translate("Upcoming story dialogue")
+                self.assertEqual(res_predict, "Upcoming story dialogue")
+                self.assertEqual(instance._query_server.call_count, 0)  # Aucun appel HTTP bloquant
+                self.assertIn("Upcoming story dialogue", instance._prefetch_queue)
+
 
 if __name__ == "__main__":
     unittest.main()
