@@ -27,14 +27,27 @@ from engines import (
 )
 from server import LiveTranslatorHandler, state
 
+def _create_temp_db():
+    """Crée un fichier de base de données temporaire et ferme le descripteur immédiatement (requis sous Windows)."""
+    f = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    f.close()
+    return f.name
+
+def _remove_temp_file(path):
+    """Supprime un fichier temporaire de manière robuste sous tous les OS."""
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
 class TestStorage(unittest.TestCase):
     def setUp(self):
-        self.temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        self.storage = TranslationStorage(self.temp_db.name)
+        self.db_path = _create_temp_db()
+        self.storage = TranslationStorage(self.db_path)
 
     def tearDown(self):
-        if os.path.exists(self.temp_db.name):
-            os.remove(self.temp_db.name)
+        _remove_temp_file(self.db_path)
 
     def test_save_and_get_translation(self):
         self.assertIsNone(self.storage.get_translation("GameA", "Hello", "fr"))
@@ -215,44 +228,46 @@ class TestServerHandler(unittest.TestCase):
 
     def test_api_translate_cache_hit_and_miss(self):
         # Configuration d'un stockage temporaire
-        temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        state.storage = TranslationStorage(temp_db.name)
+        temp_db = _create_temp_db()
+        old_storage = state.storage
+        state.storage = TranslationStorage(temp_db)
         state.target_lang = "fr"
 
-        handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)
-        handler.path = "/api/translate"
-        handler.headers = {"Content-Length": 100}
+        try:
+            handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)
+            handler.path = "/api/translate"
+            handler.headers = {"Content-Length": 100}
 
-        # Mock engine
-        mock_engine = MagicMock()
-        mock_engine.translate.return_value = "Salut !"
-        state.google_engine = mock_engine
-        state.engine_name = "google"
+            # Mock engine
+            mock_engine = MagicMock()
+            mock_engine.translate.return_value = "Salut !"
+            state.google_engine = mock_engine
+            state.engine_name = "google"
 
-        # 1. Premier appel (miss)
-        handler.rfile = io.BytesIO(json.dumps({"text": "Hello!", "game_id": "TestGame"}).encode('utf-8'))
-        handler.headers["Content-Length"] = len(handler.rfile.getvalue())
+            # 1. Premier appel (miss)
+            handler.rfile = io.BytesIO(json.dumps({"text": "Hello!", "game_id": "TestGame"}).encode('utf-8'))
+            handler.headers["Content-Length"] = len(handler.rfile.getvalue())
 
-        sent_data = []
-        handler._send_json = lambda data, status=200: sent_data.append(data)
-        handler.do_POST()
+            sent_data = []
+            handler._send_json = lambda data, status=200: sent_data.append(data)
+            handler.do_POST()
 
-        self.assertEqual(len(sent_data), 1)
-        self.assertFalse(sent_data[0]["cached"])
-        self.assertEqual(sent_data[0]["translated"], "Salut !")
+            self.assertEqual(len(sent_data), 1)
+            self.assertFalse(sent_data[0]["cached"])
+            self.assertEqual(sent_data[0]["translated"], "Salut !")
 
-        # 2. Deuxième appel (cache hit immédiat)
-        sent_data.clear()
-        handler.rfile = io.BytesIO(json.dumps({"text": "Hello!", "game_id": "TestGame"}).encode('utf-8'))
-        handler.headers["Content-Length"] = len(handler.rfile.getvalue())
-        handler.do_POST()
+            # 2. Deuxième appel (cache hit immédiat)
+            sent_data.clear()
+            handler.rfile = io.BytesIO(json.dumps({"text": "Hello!", "game_id": "TestGame"}).encode('utf-8'))
+            handler.headers["Content-Length"] = len(handler.rfile.getvalue())
+            handler.do_POST()
 
-        self.assertEqual(len(sent_data), 1)
-        self.assertTrue(sent_data[0]["cached"])
-        self.assertEqual(sent_data[0]["translated"], "Salut !")
-
-        if os.path.exists(temp_db.name):
-            os.remove(temp_db.name)
+            self.assertEqual(len(sent_data), 1)
+            self.assertTrue(sent_data[0]["cached"])
+            self.assertEqual(sent_data[0]["translated"], "Salut !")
+        finally:
+            state.storage = old_storage
+            _remove_temp_file(temp_db)
 
     def test_api_config_multi_engines(self):
         handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)
@@ -348,7 +363,7 @@ class TestServerHandler(unittest.TestCase):
         rpy_path = os.path.join(BASE_DIR, "plugin", "00_translator.rpy")
         with open(rpy_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
-        
+
         # Strip out the 'init ... python:' and config hooks for testing
         py_lines = []
         skip_block = False
@@ -364,12 +379,12 @@ class TestServerHandler(unittest.TestCase):
                 py_lines.append(line[4:])
             else:
                 py_lines.append(line)
-        
+
         test_scope = {"config": type("MockConfig", (), {"gamedir": "/mock/game", "name": "TestGame"})()}
         exec("".join(py_lines), test_scope)
-        
+
         LiveTranslatorClass = test_scope["LiveTranslator"]
-        
+
         # Test 1: Resolve server script with explicit SERVER_PATH
         with patch.object(LiveTranslatorClass, '__init__', lambda self: None):
             instance = LiveTranslatorClass()
@@ -377,7 +392,7 @@ class TestServerHandler(unittest.TestCase):
             instance.spawned_server = False
             instance.server_process = None
             instance.opener = MagicMock()
-            
+
             # Explicit file
             server_file = os.path.join(BASE_DIR, "server", "server.py")
             test_scope["SERVER_PATH"] = server_file
@@ -408,11 +423,11 @@ class TestServerHandler(unittest.TestCase):
                 plugin_mock = os.path.join(temp_dir, "00_translator.rpy")
                 with open(plugin_mock, "w", encoding="utf-8") as f:
                     f.write('SERVER_PATH = ""\nAUTO_START_MODE = "ask"\n')
-                
+
                 instance.game_dir = temp_dir
                 test_scope["SERVER_PATH"] = ""
                 instance._remember_server_path(server_file)
-                
+
                 self.assertEqual(test_scope["SERVER_PATH"], server_file)
                 with open(plugin_mock, "r", encoding="utf-8") as f:
                     written = f.read()
@@ -450,9 +465,9 @@ class TestRegression(unittest.TestCase):
 
     def test_regression_register_game_endpoint(self):
         """Vérifie que /api/register_game enregistre immédiatement le jeu sans exiger de traduction préalable."""
-        temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        temp_db = _create_temp_db()
         old_storage = state.storage
-        state.storage = TranslationStorage(temp_db.name)
+        state.storage = TranslationStorage(temp_db)
 
         try:
             handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)
@@ -480,14 +495,13 @@ class TestRegression(unittest.TestCase):
             self.assertEqual(games[0]["game_id"], "SuperGameVN")
         finally:
             state.storage = old_storage
-            if os.path.exists(temp_db.name):
-                os.remove(temp_db.name)
+            _remove_temp_file(temp_db)
 
     def test_regression_translate_respects_target_lang(self):
         """Vérifie que /api/translate prend en compte target_lang dans la requête et synchronise l'état."""
-        temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        temp_db = _create_temp_db()
         old_storage = state.storage
-        state.storage = TranslationStorage(temp_db.name)
+        state.storage = TranslationStorage(temp_db)
 
         try:
             handler = LiveTranslatorHandler.__new__(LiveTranslatorHandler)
@@ -513,8 +527,7 @@ class TestRegression(unittest.TestCase):
                 self.assertEqual(sent_data[0][1]["target_lang"], "es")
         finally:
             state.storage = old_storage
-            if os.path.exists(temp_db.name):
-                os.remove(temp_db.name)
+            _remove_temp_file(temp_db)
 
     def test_regression_is_dialogue_text_filters_ui(self):
         """Vérifie que is_dialogue_text filtre les boutons d'interface (0 lag) et accepte les dialogues."""
@@ -953,9 +966,9 @@ class TestBatchPreload(unittest.TestCase):
 
     def test_storage_batch_get_existing(self):
         """Vérifie que batch_get_existing retourne les traductions en cache efficacement."""
-        temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        temp_db = _create_temp_db()
         try:
-            storage = TranslationStorage(temp_db.name)
+            storage = TranslationStorage(temp_db)
 
             # Aucune traduction au départ
             result = storage.batch_get_existing("Game1", "fr", ["Hello", "World"])
@@ -980,14 +993,13 @@ class TestBatchPreload(unittest.TestCase):
             result = storage.batch_get_existing("Game2", "fr", ["Hello"])
             self.assertEqual(result, {})
         finally:
-            if os.path.exists(temp_db.name):
-                os.remove(temp_db.name)
+            _remove_temp_file(temp_db)
 
     def test_batch_translate_endpoint_cache_and_translate(self):
         """Vérifie le endpoint /api/batch_translate (cache hit + misses simulés)."""
-        temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        temp_db = _create_temp_db()
         old_storage = state.storage
-        state.storage = TranslationStorage(temp_db.name)
+        state.storage = TranslationStorage(temp_db)
         state.target_lang = "fr"
 
         try:
@@ -1038,8 +1050,7 @@ class TestBatchPreload(unittest.TestCase):
             self.assertEqual(state.storage.get_translation("TestGame", "Bye", "fr"), "Adieu !")
         finally:
             state.storage = old_storage
-            if os.path.exists(temp_db.name):
-                os.remove(temp_db.name)
+            _remove_temp_file(temp_db)
 
     def test_batch_translate_empty_texts(self):
         """Vérifie que batch_translate avec texts=[] retourne un message informatif."""

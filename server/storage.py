@@ -44,7 +44,7 @@ class TranslationStorage:
                 )
             """)
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_translations_lookup 
+                CREATE INDEX IF NOT EXISTS idx_translations_lookup
                 ON translations(game_id, target_lang, source_text)
             """)
             conn.commit()
@@ -68,7 +68,7 @@ class TranslationStorage:
         with self._connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT translated_text FROM translations 
+                SELECT translated_text FROM translations
                 WHERE game_id = ? AND source_text = ? AND target_lang = ?
                 """,
                 (game_id, source_text, target_lang)
@@ -106,7 +106,7 @@ class TranslationStorage:
                 """
                 INSERT INTO translations (game_id, source_text, translated_text, target_lang, created_at)
                 VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(game_id, source_text, target_lang) 
+                ON CONFLICT(game_id, source_text, target_lang)
                 DO UPDATE SET translated_text = excluded.translated_text, created_at = excluded.created_at
                 """,
                 (game_id, source_text, translated_text, target_lang, now_str)

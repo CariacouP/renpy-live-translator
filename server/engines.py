@@ -5,7 +5,6 @@ import json
 import urllib.request
 import urllib.error
 import urllib.parse
-import time
 import ssl
 
 def get_ssl_context():

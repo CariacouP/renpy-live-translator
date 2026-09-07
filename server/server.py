@@ -77,7 +77,7 @@ class ServerState:
         self.storage = TranslationStorage()
         self.engine_name = DEFAULT_ENGINE
         self.target_lang = DEFAULT_LANG
-        
+
         self.ollama_model = DEFAULT_OLLAMA_MODEL
         self.deepl_api_key = DEFAULT_DEEPL_KEY
         self.groq_api_key = DEFAULT_GROQ_KEY
@@ -445,10 +445,10 @@ def run_server(port=5005):
     record_server_location()
     server_address = ("127.0.0.1", port)
     httpd = ThreadingHTTPServer(server_address, LiveTranslatorHandler)
-    print(f"==================================================")
-    print(f"  🎮 Ren'Py Live Translator Server active on:")
+    print("==================================================")
+    print("  🎮 Ren'Py Live Translator Server active on:")
     print(f"  👉 http://127.0.0.1:{port}")
-    print(f"==================================================")
+    print("==================================================")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
