@@ -9,6 +9,14 @@ import io
 import re
 from unittest.mock import patch, MagicMock
 
+# Force UTF-8 encoding on stdout/stderr for Windows console compatibility
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Ajouter server au sys.path
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(BASE_DIR, "server"))

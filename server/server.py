@@ -13,6 +13,13 @@ if sys.version_info < (3, 8):
     print("   Please install/update Python from https://www.python.org/downloads/")
     print("=" * 60)
     sys.exit(1)
+# Force UTF-8 encoding on stdout/stderr for Windows console compatibility (emojis, multi-language logs)
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 import json
 import time
